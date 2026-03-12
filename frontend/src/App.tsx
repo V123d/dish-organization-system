@@ -1,6 +1,7 @@
 /* ========== 主应用入口 ========== */
 import './index.css';
 import ContextHeader from './components/layout/ContextHeader';
+import AgentPanel from './components/layout/AgentPanel';
 import AgentChat from './components/chat/AgentChat';
 import CalendarDashboard from './components/calendar/CalendarDashboard';
 import ConfigDrawer from './components/config-drawer/ConfigDrawer';
@@ -15,7 +16,7 @@ function App() {
             <span className="text-white text-sm">🍽️</span>
           </div>
           <h1 className="text-sm font-bold text-text-primary tracking-wide">走云智能后厨</h1>
-          <span className="text-xs text-text-muted">智能排菜系统 v1.0</span>
+          <span className="text-xs text-text-muted">智能排菜系统 v2.0 · 多智能体架构</span>
         </div>
       </header>
 
@@ -26,10 +27,14 @@ function App() {
           <CalendarDashboard />
         </main>
 
-        {/* 右侧: 对话 + 概览区 */}
+        {/* 右侧: 智能体面板 + 对话 + 概览区 */}
         <aside className="w-[380px] shrink-0 border-l border-border-light bg-white flex flex-col overflow-hidden">
           {/* 全局概览 */}
           <ContextHeader />
+          {/* 智能体状态面板 */}
+          <div className="border-b border-border-light bg-gray-900/95">
+            <AgentPanel />
+          </div>
           {/* 对话窗口 */}
           <div className="flex-1 min-h-0 overflow-hidden">
             <AgentChat />

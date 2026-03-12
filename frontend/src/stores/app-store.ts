@@ -7,6 +7,7 @@ import type {
     WeeklyMenu,
     DashboardMetrics,
     SceneType,
+    AgentInfo,
 } from '../types';
 
 /** 生成默认的餐次配置 */
@@ -74,6 +75,10 @@ interface AppState {
     setWeeklyMenu: (menu: WeeklyMenu) => void;
     metrics: DashboardMetrics | null;
     setMetrics: (m: DashboardMetrics) => void;
+
+    /** 智能体注册表 */
+    agents: AgentInfo[];
+    setAgents: (agents: AgentInfo[]) => void;
 
     /** 配置抽屉 */
     configDrawerOpen: boolean;
@@ -205,6 +210,10 @@ export const useAppStore = create<AppState>((set) => ({
     setWeeklyMenu: (menu) => set({ weeklyMenu: menu }),
     metrics: null,
     setMetrics: (m) => set({ metrics: m }),
+
+    // 智能体注册表
+    agents: [],
+    setAgents: (agents) => set({ agents }),
 
     // 配置抽屉
     configDrawerOpen: false,

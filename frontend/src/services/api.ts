@@ -1,5 +1,5 @@
 /* ========== API 调用服务层 ========== */
-import type { MenuPlanConfig, ChatMessage, WeeklyMenu, DashboardMetrics, DishInfo } from '../types';
+import type { MenuPlanConfig, ChatMessage, WeeklyMenu, DashboardMetrics, DishInfo, AgentInfo } from '../types';
 
 const API_BASE = '/api';
 
@@ -112,3 +112,16 @@ export function showNotImplemented(featureName: string): void {
         setTimeout(() => toast.remove(), 300);
     }, 2500);
 }
+
+/** 获取智能体注册表（动态读取，新增智能体自动出现） */
+export async function getAgentRegistry(): Promise<AgentInfo[]> {
+    try {
+        const res = await fetch(`${API_BASE}/agents`);
+        if (!res.ok) throw new Error('获取智能体注册表失败');
+        const data = await res.json();
+        return data.agents || [];
+    } catch {
+        return [];
+    }
+}
+

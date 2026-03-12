@@ -166,3 +166,13 @@ export interface ChatMessage {
     menu_result?: WeeklyMenu;
     metrics?: DashboardMetrics;
 }
+
+/** 智能体信息（来自后端注册表） */
+export interface AgentInfo {
+    id: string;
+    name: string;
+    description: string;
+    type: 'llm' | 'rule';
+    status: 'active' | 'inactive';
+    endpoint: string;
+}

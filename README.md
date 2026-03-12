@@ -20,23 +20,29 @@
 |---|---|
 | 营养师手动翻查食谱，耗时 2-4 小时 | AI 一键生成一周菜单，耗时 30 秒 |
 | 凭经验估算成本，存在超标风险 | 系统自动核算食材成本，实时告警 |
-| 难以兼顾多种约束（红线、过敏、营养） | Agent 多维度交叉校验，100% 满足硬约束 |
+| 难以兼顾多种约束（红线、过敏、营养） | 多智能体交叉校验，100% 满足硬约束 |
 | 菜品重复率高，学生抱怨 | 智能去重算法，重复率 ≤ 20% |
 
 ---
 
 ## 🏗️ 系统架构
 
+### 多智能体架构 (v2.0)
+
+系统采用 **独立智能体 + 编排器** 架构，每个智能体有独立的职责和 API 接口：
+
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                          前端 (React + TypeScript)                │
+│                      前端 (React + TypeScript)                    │
 │  ┌──────────────┐  ┌───────────────┐  ┌─────────────────────┐  │
 │  │  日历看板     │  │  对话窗口      │  │  规则配置抽屉       │  │
 │  │ CalendarDash  │  │  AgentChat    │  │  ConfigDrawer       │  │
 │  │  board       │  │               │  │                     │  │
 │  └──────┬───────┘  └───────┬───────┘  └──────────┬──────────┘  │
 │         │                  │                     │              │
-│         └──────────────────┼─────────────────────┘              │
+│  ┌──────┴──────────────────┼─────────────────────┘              │
+│  │   智能体状态面板 (AgentPanel) — 动态展示已注册智能体           │
+│  └─────────────────────────┼────────────────────────────────────│
 │                            │ Zustand 全局状态管理                 │
 │                            ▼                                    │
 │                     API 服务层 (SSE / REST)                      │
@@ -44,24 +50,45 @@
                              │ HTTP / Server-Sent Events
 ┌────────────────────────────┼────────────────────────────────────┐
 │                        后端 (FastAPI)                            │
-│  ┌─────────────────────────▼──────────────────────────────────┐ │
-│  │                   /api/chat/send (SSE)                     │ │
-│  │  ┌───────────┐  ┌───────────────┐  ┌───────────────────┐  │ │
-│  │  │  Intent   │→ │    Menu       │→ │   Constraint      │  │ │
-│  │  │  Parser   │  │   Generator   │  │    Checker         │  │ │
-│  │  │ 意图解析   │  │  菜单生成      │  │   约束校验          │  │ │
-│  │  └───────────┘  └───────┬───────┘  └───────────────────┘  │ │
-│  │                         │                                  │ │
-│  │                    Qwen-max LLM                            │ │
-│  │              (Prompt Chaining 策略)                         │ │
+│                                                                 │
+│  ┌──────────────────── 编排器 (Orchestrator) ──────────────────┐ │
+│  │                                                            │ │
+│  │  ┌─────────────┐   ┌───────────────┐   ┌───────────────┐  │ │
+│  │  │  ① Intent   │ → │  ② Menu       │ → │ ③ Constraint  │  │ │
+│  │  │   Parser    │   │   Generator   │   │   Checker     │  │ │
+│  │  │  意图解析    │   │   菜单生成     │   │  约束校验      │  │ │
+│  │  │  (LLM)     │   │   (LLM)       │   │  (规则引擎)    │  │ │
+│  │  └─────────────┘   └───────────────┘   └───────┬───────┘  │ │
+│  │                                                │           │ │
+│  │                     ┌──────────────────────────┐│           │ │
+│  │                     │ 不通过 → 自动重排 (≤2次)  ││           │ │
+│  │                     └──────────────────────────┘│           │ │
+│  │                                                ▼           │ │
+│  │                                       ┌───────────────┐    │ │
+│  │                                       │ ④ Data        │    │ │
+│  │                                       │  Enrichment   │    │ │
+│  │                                       │  数据补全      │    │ │
+│  │                                       │  (Python)     │    │ │
+│  │                                       └───────────────┘    │ │
 │  └────────────────────────────────────────────────────────────┘ │
 │                                                                 │
 │  ┌────────────────┐  ┌──────────────┐  ┌──────────────────┐    │
-│  │ 菜品库 (JSON)   │  │ Pydantic 模型 │  │  占位 API (6个)   │    │
-│  │ 80道中餐菜品    │  │ 类型校验       │  │  待开发功能        │    │
+│  │ 菜品库 (JSON)   │  │ Pydantic 模型 │  │  智能体注册表     │    │
+│  │ 80道中餐菜品    │  │ 类型校验       │  │  自动注册机制     │    │
 │  └────────────────┘  └──────────────┘  └──────────────────┘    │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+### 智能体注册表
+
+| # | 智能体 ID | 名称 | 类型 | 职责 |
+|:---:|---|---|:---:|---|
+| ① | `intent-parser` | 意图解析智能体 | LLM | 将自然语言指令解析为结构化排菜需求 |
+| ② | `menu-generator` | 菜单生成智能体 | LLM | 从菜品库中选菜，组装一周菜单 |
+| ③ | `constraint-checker` | 约束校验智能体 | 规则 | 红线扫描、预算检查、重复率计算（确定性校验） |
+| ④ | `data-enrichment` | 数据补全智能体 | 规则 | 将紧凑菜单补全为包含完整属性的菜品数据 |
+
+> **可扩展性设计**：新增智能体只需继承 `BaseAgent` 基类并定义 `agent_id`/`agent_name`/`agent_description`，即可自动注册到注册表和 API 路由中，前端面板也会自动展示新智能体。
 
 ### 技术栈
 
@@ -82,44 +109,53 @@
 
 ```
 走云智能排菜系统/
-├── frontend/                           # 前端 React 应用
+├── start.bat                              # 🚀 一键启动脚本（双击即可）
+├── frontend/                              # 前端 React 应用
 │   ├── src/
-│   │   ├── components/                 # UI 组件
+│   │   ├── components/
 │   │   │   ├── layout/
-│   │   │   │   └── ContextHeader.tsx   # 全局概览区
+│   │   │   │   ├── ContextHeader.tsx     # 全局概览区
+│   │   │   │   └── AgentPanel.tsx        # 🆕 智能体状态面板
 │   │   │   ├── chat/
-│   │   │   │   └── AgentChat.tsx       # 智能对话窗口
+│   │   │   │   └── AgentChat.tsx         # 智能对话窗口
 │   │   │   ├── config-drawer/
-│   │   │   │   └── ConfigDrawer.tsx    # 深度规则配置抽屉
+│   │   │   │   └── ConfigDrawer.tsx      # 深度规则配置抽屉
 │   │   │   └── calendar/
-│   │   │       └── CalendarDashboard.tsx # 周菜单日历看板
+│   │   │       └── CalendarDashboard.tsx  # 周菜单日历看板
 │   │   ├── stores/
-│   │   │   └── app-store.ts            # Zustand 全局状态
+│   │   │   └── app-store.ts              # Zustand 全局状态
 │   │   ├── services/
-│   │   │   └── api.ts                  # API 调用层 (SSE 解析)
+│   │   │   └── api.ts                    # API 调用层 (SSE + REST)
 │   │   ├── types/
-│   │   │   └── index.ts                # TypeScript 类型定义
-│   │   ├── utils/
-│   │   │   └── date.ts                 # 日期工具函数
-│   │   ├── App.tsx                     # 主应用入口
-│   │   ├── main.tsx                    # React 渲染挂载
-│   │   └── index.css                   # 设计系统 (动画/主题/玻璃态)
-│   ├── vite.config.ts                  # Vite 构建配置 (含 SSE 代理)
-│   └── package.json
+│   │   │   └── index.ts                  # TypeScript 类型定义
+│   │   ├── App.tsx                       # 主应用入口
+│   │   └── index.css                     # 设计系统
+│   └── vite.config.ts                    # Vite 构建配置 (含 SSE 代理)
 │
-├── backend/                            # 后端 FastAPI 应用
+├── backend/                               # 后端 FastAPI 应用
 │   ├── app/
-│   │   ├── main.py                     # FastAPI 入口 & 路由注册
-│   │   ├── config.py                   # 配置管理 (LLM API Key)
+│   │   ├── main.py                       # FastAPI 入口 + 路由挂载
+│   │   ├── config.py                     # 配置管理 (LLM API Key)
 │   │   ├── schemas/
-│   │   │   └── chat_schema.py          # Pydantic 请求/响应模型
+│   │   │   ├── chat_schema.py            # 对话请求/响应模型
+│   │   │   └── agent_schema.py           # 🆕 智能体注册表模型
+│   │   ├── routers/
+│   │   │   ├── chat_router.py            # 🆕 对话 SSE 路由
+│   │   │   ├── agent_router.py           # 🆕 智能体独立调用路由
+│   │   │   └── dish_router.py            # 🆕 菜品库路由
 │   │   ├── services/
-│   │   │   └── agent_service.py        # 🧠 多智能体核心服务
+│   │   │   ├── base_agent.py             # 🆕 智能体基类 + 自动注册
+│   │   │   ├── intent_parser.py          # 🆕 ① 意图解析智能体
+│   │   │   ├── menu_generator.py         # 🆕 ② 菜单生成智能体
+│   │   │   ├── constraint_checker.py     # 🆕 ③ 约束校验智能体
+│   │   │   ├── data_enrichment.py        # 🆕 ④ 数据补全智能体
+│   │   │   └── orchestrator.py           # 🆕 多智能体编排器
 │   │   └── data/
-│   │       └── dish_library.json       # 菜品库 Mock 数据 (80道)
+│   │       └── dish_library.json         # 菜品库 Mock 数据 (80道)
+│   ├── .env.example                      # 环境变量模板
 │   └── requirements.txt
 │
-└── README.md                           # 本文档
+└── README.md
 ```
 
 ---
@@ -128,250 +164,100 @@
 
 ### 1. 多智能体协同 (Multi-Agent Orchestration)
 
-**文件**: [`backend/app/services/agent_service.py`](backend/app/services/agent_service.py)
-
 #### 设计原理
 
-系统在概念上设计了三个智能体角色，遵循 PRD 中描述的多智能体协同工作流：
-
-| 智能体 | 职责 | 输入 | 输出 |
-|---|---|---|---|
-| **Intent Parser** (意图解析) | 从自然语言中提取排菜意图 | 用户消息 + 规则配置 JSON | 结构化的排菜需求 |
-| **Menu Generator** (菜单生成) | 从菜品库中选菜组装菜单 | 排菜需求 + 菜品库 + 约束 | 一周菜单 JSON |
-| **Constraint Checker** (约束校验) | 交叉校验红线/预算/重复率 | 初版菜单 + 硬约束 | 校验结果 / 触发重排 |
-
-#### Demo 阶段实现策略：Prompt Chaining
-
-在生产环境中，三个 Agent 应独立工作并可循环迭代（校验不通过则重排）。但在 **Demo 阶段**，我们采用 **Prompt Chaining（提示词链式调用）** 策略：
+系统由 4 个独立智能体组成，通过编排器 (`orchestrator.py`) 串联协同：
 
 ```
-┌─────────────────────────────────────────────────┐
-│           单次 LLM 调用 (Qwen-max)               │
-│                                                  │
-│  System Prompt 包含:                             │
-│  ├── 排餐环境 (场景/城市/周期)                     │
-│  ├── 餐次配置 (人数/餐标/分类结构)                  │
-│  ├── 全局红线 & 饮食禁忌                           │
-│  ├── 完整菜品库 (80道菜 × 详细属性)                │
-│  └── 排菜规则 (8条硬约束)                          │
-│                                                  │
-│  User Prompt: 用户自然语言指令                      │
-│                                                  │
-│  输出: 结构化 JSON (菜单 + 指标 + 总结)             │
-└─────────────────────────────────────────────────┘
+用户指令 → ① 意图解析 → ② 菜单生成 → ③ 约束校验 → ④ 数据补全 → 前端展示
+                                          ↑        │
+                                          └── 不通过 ┘ (自动重排，≤2次)
 ```
 
-**为什么这样设计**：单次调用大模型让其一步完成"理解意图→选菜组合→自我校验"的全流程，减少 API 调用次数和总耗时，同时通过精心设计的 System Prompt 中的 8 条硬约束规则，引导模型自行完成校验。这在 Demo 阶段是高效且可行的。
+#### 智能体自动注册机制
 
-#### System Prompt 构建过程
+```python
+# base_agent.py — 通过 __init_subclass__ 实现零配置注册
+class BaseAgent(ABC):
+    agent_id: ClassVar[str]
+    agent_name: ClassVar[str]
+    agent_description: ClassVar[str]
+    agent_type: ClassVar[str]  # 'llm' | 'rule'
 
-`build_system_prompt()` 函数会动态组装以下信息：
+    def __init_subclass__(cls, **kwargs):
+        """子类在导入时即自动注册到全局注册表"""
+        super().__init_subclass__(**kwargs)
+        if hasattr(cls, "agent_id") and cls.agent_id:
+            AgentRegistry.register(cls())
 
-1. **排餐环境上下文**：场景类型、城市、日期范围
-2. **各餐次详细配置**：自动遍历所有已启用的餐次，提取人数/餐标/分类结构/汤性/必用食材等
-3. **全局约束**：红线食材列表、健康状态人群、饮食禁忌群体
-4. **菜品库全量数据**：按分类列出所有 80 道菜品，包含 ID、工艺、成本、标签
-5. **8 条排菜硬规则**：数量匹配、去重、红线拦截、成本控制等
-6. **输出格式模板**：严格的 JSON Schema，确保 LLM 输出可被前端直接解析
+    @abstractmethod
+    async def execute(self, **kwargs) -> dict:
+        """执行智能体核心逻辑"""
+        ...
+```
+
+**新增智能体只需 3 步**：
+1. 在 `services/` 下创建新文件，继承 `BaseAgent`
+2. 定义 `agent_id` / `agent_name` / `agent_description` / `agent_type`
+3. 实现 `execute()` 方法
+4. 在 `main.py` 添加一行 `from .services import new_agent`
+
+无需修改路由、注册表、前端——全部自动感知。
+
+#### 约束校验智能体（确定性规则引擎）
+
+与其他 LLM 智能体不同，约束校验智能体采用 **纯 Python 确定性逻辑**，保证校验结果 100% 可靠：
+
+- 红线食材扫描：遍历菜单中每道菜的食材列表，匹配全局红线清单
+- 预算超标检测：累加每餐食材成本，对比餐标预算
+- 重复率计算：统计一周内同名菜品出现次数，计算重复率
+- 分类数量匹配：校验每餐每个分类的菜品数量是否符合配置
 
 ---
 
 ### 2. SSE 流式通信 (Server-Sent Events)
 
-**文件**: [`backend/app/main.py`](backend/app/main.py) + [`frontend/src/services/api.ts`](frontend/src/services/api.ts)
+由于 LLM 生成一周菜单需要 **20~40 秒**，系统采用 SSE 实现实时流式通信：
 
-#### 设计原理
-
-由于 LLM 生成一周完整菜单通常需要 **20~40 秒**，如果使用传统的 REST 请求-响应模式，用户将面对一个长时间的空白等待，严重影响体验。因此系统采用 **SSE (Server-Sent Events)** 实现实时流式通信。
-
-#### 后端实现
-
-```python
-# FastAPI 使用 StreamingResponse 包装异步生成器
-@app.post("/api/chat/send")
-async def chat_send(request: ChatRequest):
-    return StreamingResponse(
-        generate_menu_stream(request.message, request.config),
-        media_type="text/event-stream",  # SSE 标准 Content-Type
-        headers={"X-Accel-Buffering": "no"},  # 禁用 Nginx 缓冲
-    )
-```
-
-`generate_menu_stream()` 是一个 `AsyncGenerator`，通过 `yield` 逐步产出 SSE 事件：
-
-| 阶段 | SSE 事件类型 | 用途 |
+| 阶段 | SSE 事件类型 | 对应智能体 |
 |---|---|---|
-| 意图解析 | `thinking` | 显示"正在理解您的排菜需求..."动效 |
-| 成本计算 | `thinking` | 显示"正在查询食材时价..."动效 |
-| 菜单生成 | `thinking` (心跳) | 每 50 tokens 发送一次进度更新 |
-| 约束校验 | `thinking` | 显示"正在交叉校验红线与预算..." |
-| 结果返回 | `content` + `menu_result` | 文本总结 + 完整菜单 JSON |
-
-**关键技术细节**：LLM 调用使用 `stream=True` 模式，即大模型逐 token 返回。后端在流式接收过程中，每累积 50 个 token 就向前端发送一个心跳事件，避免 SSE 通道因长时间无数据而被浏览器/代理层断开。
-
-#### 前端实现
-
-```typescript
-// 使用 Fetch API + ReadableStream 解析 SSE
-const reader = response.body?.getReader();
-const decoder = new TextDecoder();
-let buffer = '';
-
-while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    // 按行拆分，解析 "data: {...}" 格式的 SSE 事件
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
-    for (const line of lines) {
-        if (line.startsWith('data: ')) {
-            const parsed = JSON.parse(line.slice(6));
-            // 根据 parsed.type 分发到不同回调
-        }
-    }
-}
-```
+| 意图解析 | `thinking` | ① Intent Parser |
+| 菜单生成 | `thinking` (心跳) | ② Menu Generator |
+| 约束校验 | `thinking` | ③ Constraint Checker |
+| 数据补全 | `thinking` | ④ Data Enrichment |
+| 结果返回 | `content` + `menu_result` | 编排器汇总 |
 
 ---
 
 ### 3. 前端双轨输入模式
 
-#### 3.1 结构化约束 — 深度规则配置抽屉
+#### 结构化约束 — 深度规则配置抽屉
 
-**文件**: [`frontend/src/components/config-drawer/ConfigDrawer.tsx`](frontend/src/components/config-drawer/ConfigDrawer.tsx)
-
-配置抽屉以**滑出式侧面板**的形式呈现，包含以下配置模块：
-
-| 模块 | 对应 PRD 章节 | 实现说明 |
-|---|---|---|
-| **基础属性** | §3.3.1 | 食堂场景下拉（7种）、城市文本输入、日期范围选择器 |
-| **动态餐次管理** | §3.3.2 | 可勾选启用/禁用、自定义名称、动态新增/删除餐次 |
-| **餐次内部配置** | §3.3.3 | 人数/入口率/餐标、用餐方式（4种）、菜品分类栅格（可自由增删列、编辑名称和数量）、主食细类多选、汤品描述和汤性单选、烹饪工艺标签、口味偏好文本、必用食材/必排菜品 |
-| **特殊人群** | §3.3.4 | 健康状态勾选（6种）、饮食禁忌勾选（8种）、全局红线文本域 |
-
-**状态管理原理**：所有配置数据存储在 Zustand store 的 `config: MenuPlanConfig` 对象中。当用户点击"保存并同步"时，配置被序列化为 JSON，随下一次对话请求一并发送给后端，成为 Agent System Prompt 的一部分。
-
-#### 3.2 自然语言微调 — 智能对话窗口
-
-**文件**: [`frontend/src/components/chat/AgentChat.tsx`](frontend/src/components/chat/AgentChat.tsx)
-
-| 功能 | 实现原理 |
+| 模块 | 内容 |
 |---|---|
-| **消息列表** | 基于 `messages: ChatMessage[]` 数组渲染，支持用户/Agent 两种角色的气泡样式 |
-| **思考动效** | 每条 Agent 消息携带 `thinking_steps: ThinkingStep[]`，根据步骤状态渲染 ✓/⏳/❌ 图标 |
-| **快捷指令标签** | 输入框上方的 6 个预设标签，点击自动补全到输入框 |
-| **排菜结果卡片** | 当 Agent 消息包含 `metrics` 时，渲染绿色渐变的总结卡片（成本/营养/重复率/告警） |
-| **流式内容** | 通过 `updateMessage()` 实时追加 SSE 流中的 `content` 事件到消息体 |
+| **基础属性** | 食堂场景（7种）、城市、日期范围 |
+| **动态餐次管理** | 可勾选启用/禁用、自定义名称、动态增删餐次 |
+| **餐次内部配置** | 人数/入口率/餐标、菜品分类栅格、主食/汤品/工艺/口味 |
+| **特殊人群** | 健康状态（6种）、饮食禁忌（8种）、全局红线 |
+
+#### 自然语言微调 — 智能对话窗口
+
+支持自由文本输入和 6 个预设快捷标签（`#提高蛋白质`、`#控制成本在8元内` 等）。
 
 ---
 
-### 4. 周菜单日历看板
+### 4. 智能体状态面板
 
-**文件**: [`frontend/src/components/calendar/CalendarDashboard.tsx`](frontend/src/components/calendar/CalendarDashboard.tsx)
-
-#### 嵌套网格视图
-
-日历看板的核心是一个 **二维嵌套网格表格**：
-
-```
-         周一     周二     周三     周四     周五     周六     周日
-午餐
-  大荤   [菜品卡] [菜品卡] [菜品卡] [菜品卡] [菜品卡] [菜品卡] [菜品卡]
-  小荤   [菜品卡] [菜品卡] ...
-  素菜   ...
-  主食   ...
-  汤     ...
-晚餐
-  大荤   ...
-  素菜   ...
-```
-
-- **纵轴**：餐次 → 菜品分类（使用 `rowSpan` 合并餐次单元格）
-- **横轴**：一周七天（通过 `getDateRange()` 动态生成日期范围）
-- **单元格数据**：从 `weeklyMenu[date][mealName][categoryName]` 三级嵌套中读取
-
-#### 交互功能
-
-| 功能 | 实现说明 |
-|---|---|
-| **指标仪表盘** | 4 张渐变色卡片（总成本/营养达标率/重复率/告警数），数据来自后端 `metrics` |
-| **菜品卡片** | 显示菜名、单价、工艺；Agent 排定的为绿色，手动添加的为橙色 |
-| **悬浮添加** | `group-hover:opacity-100` 实现鼠标悬浮时出现"+添加"按钮 |
-| **搜索换菜** | 模态弹窗中调用 `/api/dishes/search` 实时搜索菜品库，点击即替换 |
+前端右侧新增 **智能体矩阵面板**，自动从 `GET /api/agents` 获取注册表数据，展示：
+- 每个智能体的名称和在线状态
+- 智能体类型标签（AI = LLM 驱动 / 规则 = 确定性逻辑）
+- 新增智能体自动出现，无需前端代码改动
 
 ---
 
-### 5. 菜品库 Mock 数据
+### 5. 菜品库
 
-**文件**: [`backend/app/data/dish_library.json`](backend/app/data/dish_library.json)
-
-菜品库包含 **80 道标准中餐菜品**，覆盖以下分类：
-
-| 分类 | 数量 | 示例菜品 |
-|---|---|---|
-| **大荤** | 19道 | 红烧肉、糖醋排骨、清蒸鲈鱼、土豆牛腩、宫保鸡丁 |
-| **小荤** | 18道 | 青椒肉丝、番茄炒蛋、木须肉、鱼香肉丝、香菇滑鸡 |
-| **素菜** | 20道 | 清炒时蔬、地三鲜、麻婆豆腐、酸辣土豆丝、蒜蓉西兰花 |
-| **主食** | 10道 | 白米饭、蛋炒饭、手工馒头、杂粮饭、猪肉水饺 |
-| **汤**   | 13道 | 紫菜蛋花汤、冬瓜排骨汤、绿豆汤、当归生姜羊肉汤 |
-
-每道菜品包含以下属性：
-- `id`: 唯一标识
-- `name`: 菜品名称
-- `category`: 所属分类（大荤/小荤/素菜/主食/汤）
-- `main_ingredients`: 主要食材列表
-- `process_type`: 烹饪工艺（炒/蒸/烧/炖/煎/烤/凉拌等）
-- `flavor`: 口味特征（咸鲜/酸甜/麻辣/清淡等）
-- `cost_per_serving`: 单人份食材成本（元）
-- `nutrition`: 营养成分（热量/蛋白质/碳水/脂肪）
-- `tags`: 标签数组（菜系/季节/体质/过敏原等）
-
----
-
-### 6. 全局状态管理
-
-**文件**: [`frontend/src/stores/app-store.ts`](frontend/src/stores/app-store.ts)
-
-使用 **Zustand** 管理全局状态，设计为单一 store 包含四大模块：
-
-```typescript
-interface AppState {
-    // 1. 规则配置 — 与 PRD 中的 Agent Context JSON Schema 一一对应
-    config: MenuPlanConfig;
-    updateScene / updateCity / updateSchedule / ...
-
-    // 2. 对话状态 — 消息列表 + 生成状态
-    messages: ChatMessage[];
-    isGenerating: boolean;
-
-    // 3. 菜单结果 — AI 生成的周菜单 + 核心指标
-    weeklyMenu: WeeklyMenu | null;
-    metrics: DashboardMetrics | null;
-
-    // 4. UI 状态 — 配置抽屉开关
-    configDrawerOpen: boolean;
-}
-```
-
-**为什么选择 Zustand 而非 Redux/MobX**：Zustand 极其轻量（~1KB），无 Provider 包裹、无 boilerplate 代码，`set()` 和 `get()` API 直观简洁，非常适合中等复杂度的应用。
-
----
-
-### 7. 设计系统 (Design System)
-
-**文件**: [`frontend/src/index.css`](frontend/src/index.css)
-
-采用 **"清新健康风"** 视觉风格：
-
-| 设计要素 | 实现方式 |
-|---|---|
-| **主色调** | 翡翠绿渐变 (`primary-400` → `primary-600`) |
-| **辅助色** | 青绿 (accent) + 暖黄 (warm) + 红色 (告警) |
-| **动画** | 5种自定义动画：`fadeIn` / `slideUp` / `slideRight` / `pulseDot` / `shimmer` |
-| **玻璃态** | `.glass` 类实现 `backdrop-filter: blur(12px)` 毛玻璃效果 |
-| **滚动条** | 5px 圆角半透明滚动条，悬浮变深 |
-| **字体** | Inter + PingFang SC + 微软雅黑 多字体栈 |
+菜品库包含 **80 道标准中餐菜品**，覆盖大荤(19)、小荤(18)、素菜(20)、主食(10)、汤(13) 五大分类。每道菜品包含 ID、名称、分类、食材、工艺、口味、成本、营养和标签等完整属性。
 
 ---
 
@@ -383,43 +269,45 @@ interface AppState {
 - **Python** ≥ 3.10
 - **通义千问 API Key** ([申请地址](https://dashscope.console.aliyun.com/))
 
-### 1. 克隆项目
+### 方式一：一键启动 (推荐)
 
 ```bash
-git clone https://github.com/<your-username>/zouyun-menu-planner.git
-cd zouyun-menu-planner
+# 1. 克隆项目
+git clone https://github.com/V123d/dish-organization-system.git
+cd dish-organization-system
+
+# 2. 配置 API Key
+copy backend\.env.example backend\.env
+# 编辑 backend\.env，将 LLM_API_KEY 替换为你的 API Key
+
+# 3. 双击启动
+start.bat
 ```
 
-### 2. 启动后端
+### 方式二：手动启动
 
+**终端 1 — 启动后端：**
 ```bash
 cd backend
-
-# 安装依赖
-pip install -r requirements.txt
-
-# 配置 LLM API Key (修改 app/config.py 中的 LLM_API_KEY，或设置环境变量)
-export LLM_API_KEY="your-api-key-here"
-
-# 启动服务
+pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-### 3. 启动前端
-
+**终端 2 — 启动前端：**
 ```bash
 cd frontend
-
-# 安装依赖
 npm install
-
-# 启动开发服务器
 npm run dev
 ```
 
-### 4. 访问系统
+### 访问系统
 
-打开浏览器访问 **http://localhost:5173**
+| 地址 | 说明 |
+|---|---|
+| http://localhost:5173 | 前端页面 |
+| http://localhost:8000/docs | Swagger API 文档 |
+| http://localhost:8000/api/agents | 智能体注册表 |
+| http://localhost:8000/api/health | 健康检查 |
 
 ---
 
@@ -427,53 +315,38 @@ npm run dev
 
 ### 基本排菜流程
 
-1. **配置约束**：点击右侧对话面板中的 ⚙️ 图标，打开规则配置抽屉
-   - 设置食堂场景（高中/医院等）和城市
-   - 勾选启用的餐次（午餐/晚餐等）
-   - 配置每个餐次的人数、餐标、菜品分类数量
-   - 如有特殊群体，勾选对应的健康状态和饮食禁忌
-   - 在红线区域填入绝对禁止的食材
-   - 点击"保存并同步"
-
-2. **发送指令**：在对话框输入自然语言指令，例如：
-   - "帮我排下周的午晚餐菜单"
-   - "下周降温，多安排驱寒的汤和炖菜"
-   - "控制成本在 10 元/人以内，多用鸡肉替代猪肉"
-
-3. **查看结果**：
-   - 右侧观察 Agent 的思考动效（意图解析→成本计算→菜单生成→约束校验）
-   - 左侧日历看板自动填充菜品卡片
-   - 上方 4 张指标卡片展示总成本、营养达标率等
-
-4. **人工微调**：
-   - 鼠标悬浮日历单元格，点击"+添加"按钮
-   - 在搜索弹窗中查找菜品，点击即可添加到该位置
-
-### 快捷指令
-
-输入框上方提供 6 个预设快捷标签，点击自动补全：
-
-| 标签 | 效果 |
-|---|---|
-| `#提高蛋白质` | AI 优先选择高蛋白菜品 |
-| `#控制成本在8元内` | 严格限制单人餐标 |
-| `#多排清淡菜` | 偏向蒸、煮、白灼工艺 |
-| `#下周大降温多排驱寒菜` | 选择温补汤品和炖菜 |
-| `#少油少盐` | 规避炸、煎，偏好清淡口味 |
-| `#用鸡鸭鱼替换猪肉` | 减少猪肉类菜品，增加禽类和鱼类 |
+1. **配置约束**：点击 ⚙️ 打开规则配置抽屉，设置场景/城市/餐次/预算/红线等
+2. **发送指令**：在对话框输入自然语言指令（如 "帮我排下周的午晚餐菜单"）
+3. **查看结果**：观察右侧 4 个智能体依次工作的思考动效，左侧日历看板自动填充菜品
+4. **人工微调**：鼠标悬浮日历单元格，点击"+"搜索替换菜品
 
 ---
 
 ## 🔌 API 接口文档
 
-### 已实现接口
+### 智能体接口
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| `POST` | `/api/chat/send` | 智能排菜对话 (SSE 流式) |
+| `GET` | `/api/agents` | 获取所有已注册智能体信息 |
+| `POST` | `/api/agents/intent-parser` | 独立调用意图解析 |
+| `POST` | `/api/agents/menu-generator` | 独立调用菜单生成 |
+| `POST` | `/api/agents/constraint-checker` | 独立调用约束校验 |
+| `POST` | `/api/agents/data-enrichment` | 独立调用数据补全 |
+
+### 编排接口
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `POST` | `/api/chat/send` | 智能排菜对话 (SSE 流式，串联全部智能体) |
+
+### 菜品库接口
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
 | `GET` | `/api/dishes/search?q=xxx` | 搜索菜品库 |
 | `GET` | `/api/dishes/library` | 获取完整菜品库 (80道) |
-| `GET` | `/api/health` | 健康检查 |
+| `GET` | `/api/health` | 健康检查（含智能体数量） |
 
 ### 占位接口 (待开发)
 
@@ -486,26 +359,24 @@ npm run dev
 | `POST` | `/api/plan/save` | 保存排餐计划 |
 | `GET` | `/api/plan/:id` | 获取排餐计划 |
 
-交互式文档：启动后端后访问 **http://localhost:8000/docs** (Swagger UI)
-
 ---
 
 ## 🗺️ 后续开发路线
 
-### Phase 2 — 数据层完善
-- [ ] 接入真实的食材定价 API (供应商 ERP)
-- [ ] 对接仓库库存管理系统，实现临期食材自动推荐
-- [ ] 持久化存储 (SQLite/PostgreSQL) 替代 JSON Mock
+### Phase 2 — 智能体增强
+- [ ] 新增 Nutrition Analyzer（营养分析智能体）— 基于食物成分表精确计算 DRIs 达标率
+- [ ] 新增 Cost Controller（成本控制智能体）— 对接实时食材价格
+- [ ] 新增 Feedback Learner（反馈学习智能体）— 数据闭环优化推荐
 
-### Phase 3 — 智能体进阶
-- [ ] 拆分为独立的 Intent Parser / Generator / Checker 三个 Agent
-- [ ] 引入循环校验机制（校验不通过自动重排）
-- [ ] 基于中国食物成分表实现 DRIs 营养达标率精确计算
+### Phase 3 — 数据层完善
+- [ ] 接入真实食材定价 API (供应商 ERP)
+- [ ] 持久化存储 (SQLite/PostgreSQL) 替代 JSON Mock
+- [ ] 用户认证与多食堂管理
 
 ### Phase 4 — 生产化
-- [ ] 用户认证与多食堂管理
 - [ ] 定量配方与采购清单自动生成
 - [ ] 历史菜单分析与智能推荐
+- [ ] Docker 容器化部署
 - [ ] 移动端适配
 
 ---
