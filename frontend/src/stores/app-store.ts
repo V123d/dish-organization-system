@@ -96,6 +96,11 @@ interface AppState {
     /** 配置抽屉 */
     configDrawerOpen: boolean;
     setConfigDrawerOpen: (v: boolean) => void;
+
+    /** 停止生成控制 */
+    abortController: AbortController | null;
+    setAbortController: (ac: AbortController | null) => void;
+    stopGeneration: () => void;
 }
 
 const schedule = getNextWeekRange();
@@ -261,4 +266,14 @@ export const useAppStore = create<AppState>((set) => ({
     // 配置抽屉
     configDrawerOpen: false,
     setConfigDrawerOpen: (v) => set({ configDrawerOpen: v }),
+
+    // 停止生成控制
+    abortController: null,
+    setAbortController: (ac) => set({ abortController: ac }),
+    stopGeneration: () => set((s) => {
+        if (s.abortController) {
+            s.abortController.abort();
+        }
+        return { isGenerating: false, abortController: null };
+    }),
 }));

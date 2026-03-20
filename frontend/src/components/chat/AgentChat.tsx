@@ -34,6 +34,8 @@ export default function AgentChat() {
         removeDateFromMenu,
         clearWeeklyMenu,
         setConfigDrawerOpen,
+        setAbortController,
+        stopGeneration,
     } = useAppStore();
 
     const scrollToBottom = () => {
@@ -79,6 +81,9 @@ export default function AgentChat() {
         
         // 生成前先清空上轮菜单，准备流式填充（UI表现）
         clearWeeklyMenu();
+
+        const controller = new AbortController();
+        setAbortController(controller);
 
         let accumulatedContent = '';
 
@@ -149,7 +154,9 @@ export default function AgentChat() {
                     ),
                 });
             },
+            controller.signal
         );
+        setAbortController(null);
     };
 
     const handleQuickPrompt = (prompt: string) => {
@@ -305,13 +312,23 @@ export default function AgentChat() {
                         className="flex-1 bg-transparent outline-none text-sm text-text-primary placeholder:text-text-muted"
                         disabled={isGenerating}
                     />
-                    <button
-                        onClick={handleSend}
-                        disabled={!input.trim() || isGenerating}
-                        className="w-8 h-8 rounded-lg bg-gradient-to-r from-primary-500 to-primary-600 flex items-center justify-center text-white disabled:opacity-40 hover:shadow-md transition-all disabled:hover:shadow-none"
-                    >
-                        <Send size={14} />
-                    </button>
+                    {isGenerating ? (
+                        <button
+                            onClick={stopGeneration}
+                            className="w-8 h-8 rounded-lg bg-red-50 flex items-center justify-center text-red-500 hover:bg-red-100 transition-all border border-red-200"
+                            title="停止生成"
+                        >
+                            <div className="w-3 h-3 bg-red-500 rounded-[2px]" />
+                        </button>
+                    ) : (
+                        <button
+                            onClick={handleSend}
+                            disabled={!input.trim()}
+                            className="w-8 h-8 rounded-lg bg-gradient-to-r from-primary-500 to-primary-600 flex items-center justify-center text-white disabled:opacity-40 hover:shadow-md transition-all disabled:hover:shadow-none"
+                        >
+                            <Send size={14} />
+                        </button>
+                    )}
                 </div>
             </div>
         </div>

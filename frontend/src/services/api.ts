@@ -26,6 +26,7 @@ export async function sendChatMessage(
     onMenuUpdate?: (date: string, meals: WeeklyMenu[string]) => void,
     onMenuRemove?: (date: string) => void,
     onConstraintAlert?: (date: string, alerts: ConstraintAlert[], attempt: number) => void,
+    abortSignal?: AbortSignal,
 ): Promise<void> {
     try {
         const bodyObj: any = { message: userMessage, config };
@@ -37,6 +38,7 @@ export async function sendChatMessage(
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(bodyObj),
+            signal: abortSignal,
         });
 
         if (!response.ok) {
@@ -106,7 +108,11 @@ export async function sendChatMessage(
             }
         }
         onDone();
-    } catch (err) {
+    } catch (err: any) {
+        if (err.name === 'AbortError') {
+            console.log('Stream generation aborted by user.');
+            return;
+        }
         onError(err instanceof Error ? err.message : '网络请求失败');
     }
 }

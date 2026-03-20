@@ -585,6 +585,10 @@ async def orchestrate_menu_stream(
             "metrics": final_metrics,
             "alerts": final_alerts_readable,
         })
+    except asyncio.CancelledError:
+        logger.info("Client disconnected, menu generation stopped.")
+        # 取消可能还在运行的任务
+        raise
     except Exception as e:
         logger.exception("Orchestration encountered fatal error")
         yield sse("error", {"message": f"遭遇致命运行错误：{e}"})
