@@ -100,18 +100,22 @@ class IntentParserAgent(BaseAgent):
         user_message: str = kwargs.get("user_message", "")
         config_json: str = kwargs.get("config_json", "{}")
         current_menu_json: str = kwargs.get("current_menu_json", "")
+        history: list[dict] = kwargs.get("history", [])
 
         user_prompt = f"用户指令：{user_message}\n当前配置（摘要）：{config_json[:500]}"
         if current_menu_json:
             user_prompt += f"\n当前已有完整菜单（局部修改参考，请根据需求推导需重新生成的日期）：\n{current_menu_json[:1500]}"
 
+        llm_messages = [{"role": "system", "content": INTENT_SYSTEM_PROMPT}]
+        for msg in history:
+            role = "user" if msg.get("role") == "user" else "assistant"
+            llm_messages.append({"role": role, "content": msg.get("content", "")})
+        llm_messages.append({"role": "user", "content": user_prompt})
+
         try:
             response = await _client.chat.completions.create(
                 model=LLM_MODEL,
-                messages=[
-                    {"role": "system", "content": INTENT_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt},
-                ],
+                messages=llm_messages,
                 temperature=0.2,
                 max_tokens=500,  # 意图解析输出短，无需大 token 限制
             )

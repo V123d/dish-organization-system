@@ -46,7 +46,7 @@ def build_filtered_dishes_text(red_lines: list[str], excluded_dishes: list[str],
     dishes_by_category: dict[str, list[str]] = {}
     
     for d in all_dishes:
-        ingredients = d.main_ingredients if isinstance(d.main_ingredients, list) else []
+        ingredients = [ing.get("name", "") for ing in d.ingredients_quantified] if isinstance(d.ingredients_quantified, list) else []
         if any(ing in red_lines_set for ing in ingredients):
             continue
         if d.name in excluded_set:
@@ -57,7 +57,7 @@ def build_filtered_dishes_text(red_lines: list[str], excluded_dishes: list[str],
             dishes_by_category[cat] = []
         tags_str = ",".join(d.tags) if isinstance(d.tags, list) else ""
         dishes_by_category[cat].append(
-            f'{d.name}(id:{d.id}, 工艺:{d.process_type}, 成本:¥{d.cost_per_serving}, 标签:[{tags_str}])'
+            f'{d.name}(id:{d.id}, 配料:{d.ingredients_quantified}, 成本:¥{d.cost_per_serving}, 标签:[{tags_str}])'
         )
         
     parts = []
@@ -74,6 +74,7 @@ def build_single_day_prompt(
     excluded_dishes: list[str] | None = None,
     retry_alerts: list[str] | None = None,
     locked_meals: dict | None = None,
+    standard_quota_str: str = "{}",
 ) -> str:
     """
     构建单天菜单生成 Prompt。
@@ -109,19 +110,12 @@ def build_single_day_prompt(
     meals_desc = []
     for meal in enabled_meals:
         cats = ", ".join([f"{c.name}×{c.count}" for c in meal.dish_structure.categories])
-        proc_limits_text = ""
-        if meal.process_limits:
-            proc_limits_text = ", ".join(
-                f"{pl.get('process_type', '')}≤{pl.get('max_count', '')}道"
-                for pl in meal.process_limits
-                if pl.get("process_type") and pl.get("max_count")
-            )
         meals_desc.append(
             f"  - {meal.meal_name}: {meal.diners_count}人, 餐标¥{meal.budget_per_person}/人, "
-            f"分类=[{cats}], 汤性={meal.soup_requirements.soup_property}, "
+            f"分类=[{cats}], 主食细类=[{','.join(meal.staple_types)}], 汤品描述=[{meal.soup_requirements.description}], "
+            f"口味偏好=[{meal.flavor_preferences}], "
             f"必用食材={meal.meal_specific_constraints.required_ingredients}, "
             f"必排菜品={meal.meal_specific_constraints.mandatory_dishes}"
-            + (f", 工艺限制=[{proc_limits_text}]" if proc_limits_text else "")
         )
 
     excluded_text = ""
@@ -150,12 +144,13 @@ def build_single_day_prompt(
     red_lines_list = config.global_hard_constraints.red_lines if config.global_hard_constraints.red_lines else []
     filtered_dishes_text = build_filtered_dishes_text(red_lines_list, excluded_dishes or [], all_dishes)
 
-    system_prompt = f"""你是走云智能排菜系统的菜单生成智能体。为 {date}（{weekday_str}）生成单天菜单。
+    system_prompt = f"""你是智能排菜系统的菜单生成智能体（武警总队版）。为 {date}（{weekday_str}）生成单天菜单。
 
 ## 排餐环境
-- 场景: {config.context_overview.scene} | 城市: {config.context_overview.city}
+- 灶别标准: {config.context_overview.kitchen_class} | 城市: {config.context_overview.city}
+- 该灶别配给标准（克/人/天）: {standard_quota_str} (⚠️ 请尽力让今日所有菜品所含配料的人均累计消耗量凑齐满足此标准)
 - 全局意图与偏好: {intent_summary or '按默认配置排菜'}
-  (⚠️ 核心原则：如果意图中提到了限定时间的偏好，如“{weekday_str}清淡”、“今天吃辣”，你必须在当前生成的这份菜单中严苛执行该要求！其他不属于{weekday_str}的要求在今天全部作废。)
+  (⚠️ 核心原则：如果意图中提到了限定时间的偏好，如“{weekday_str}清淡”，你必须在当前生成的这份菜单中严苛执行该要求！)
 
 ## 餐次配置
 {chr(10).join(meals_desc)}
@@ -163,27 +158,20 @@ def build_single_day_prompt(
 ## 全局红线（绝对禁止）
 {red_lines_list if red_lines_list else '无'}
 
-## 健康状态
-{json.dumps(active_health, ensure_ascii=False) if active_health else '无'}
-
-## 饮食禁忌
-{json.dumps(active_dietary, ensure_ascii=False) if active_dietary else '无'}
+## 饮食禁忌与重排反馈
 {excluded_text}
 {retry_text}
 {locked_text}
-## 可选菜品库（已为您过滤掉红线和排重菜品）
+## 可选菜品库（已为您过滤掉红线和排重菜品，括号内提供了配料的克数详情）
 {filtered_dishes_text}
 
-## 排菜规则（必须严格遵守，违反将被驳回重排）
-1. 严格按各餐次分类结构的数量选菜，不得多选或少选
-2. 同一天不同餐次之间菜品不得重复
-3. 全局红线食材对应的菜品绝对不选
-4. 单人餐标不得超出预算
-5. 汤性要求与汤品标签匹配
-6. 同一餐次内同一工艺（如烧、炒、蒸、炖）最多出现2道，保证工艺多样性
-7. 主食材相同的菜品不在同一餐次出现（如两道都用鸡肉的菜）
-8. 「已排过的菜品」列表中的菜品绝对不能再选，必须选择列表之外的菜品
-9. 优先搭配不同口味（酸/甜/咸/辣/清淡）的菜品，避免口味雷同
+## 排菜规则（必须严格遵守）
+1. 严格按各餐次分类结构的数量选菜，不得多选或少选。
+2. 同一天不同餐次之间菜品不得重复。
+3. 单人餐标不得超出预算。
+4. 【最重要指标】你必须预估该日所有选中菜品的配料（ingredients_quantified）乘以总就餐人数后的总和，尽可能使其逼近甚至等同该「{config.context_overview.kitchen_class}」的官方营养配额标准（肉类、蔬菜类等大类）。
+5. 「已排过的菜品」绝对不能选。
+6. 尽量优先搭配不同口味（酸/甜/咸/辣/清淡），保证丰富度。
 
 ## 输出格式（严格 JSON）
 {{"date": "{date}", "meals": {{"餐次名": {{"分类名": [{{"id": 菜品ID, "name": "菜品名"}}]}}}}}}"""
@@ -283,10 +271,17 @@ class MenuGeneratorAgent(BaseAgent):
         from ..database import AsyncSessionLocal
         from sqlalchemy import select
         from ..models.dish import Dish
+        from ..models.standard_quota import StandardQuota
+        import json
         
         async with AsyncSessionLocal() as session:
             result = await session.execute(select(Dish))
             all_dishes = result.scalars().all()
+            
+            kitchen_class = config.context_overview.kitchen_class
+            sq_res = await session.execute(select(StandardQuota).where(StandardQuota.class_type == kitchen_class))
+            sq = sq_res.scalars().first()
+            standard_quota_str = json.dumps(sq.quotas, ensure_ascii=False) if sq else "{}"
 
         system_prompt = build_single_day_prompt(
             config=config,
@@ -296,6 +291,7 @@ class MenuGeneratorAgent(BaseAgent):
             excluded_dishes=excluded_dishes,
             retry_alerts=retry_alerts,
             locked_meals=locked_meals,
+            standard_quota_str=standard_quota_str,
         )
 
         try:
@@ -360,10 +356,17 @@ class MenuGeneratorAgent(BaseAgent):
         from ..database import AsyncSessionLocal
         from sqlalchemy import select
         from ..models.dish import Dish
+        from ..models.standard_quota import StandardQuota
+        import json
         
         async with AsyncSessionLocal() as session:
             result = await session.execute(select(Dish))
             all_dishes = result.scalars().all()
+            
+            kitchen_class = config.context_overview.kitchen_class
+            sq_res = await session.execute(select(StandardQuota).where(StandardQuota.class_type == kitchen_class))
+            sq = sq_res.scalars().first()
+            standard_quota_str = json.dumps(sq.quotas, ensure_ascii=False) if sq else "{}"
 
         system_prompt = build_single_day_prompt(
             config=config,
@@ -373,6 +376,7 @@ class MenuGeneratorAgent(BaseAgent):
             excluded_dishes=excluded_dishes,
             retry_alerts=retry_alerts,
             locked_meals=locked_meals,
+            standard_quota_str=standard_quota_str,
         )
 
         stream = await _client.chat.completions.create(

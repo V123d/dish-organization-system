@@ -2,7 +2,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Send, Sparkles, Settings2, CheckCircle2, Loader2, AlertCircle, Bot, User } from 'lucide-react';
 import { useAppStore } from '../../stores/app-store';
-import { sendChatMessage } from '../../services/api';
+import { sendChatMessage, saveChatSession } from '../../services/api';
 import type { ConstraintAlert } from '../../services/api';
 import { generateId } from '../../utils/date';
 import type { ThinkingStep } from '../../types';
@@ -86,9 +86,11 @@ export default function AgentChat() {
         setAbortController(controller);
 
         let accumulatedContent = '';
+        const historyForApi = messages.filter(m => m.id !== 'welcome').map(m => ({ role: m.role, content: m.content }));
 
         await sendChatMessage(
             text,
+            historyForApi,
             config,
             currentMenuContext,
             // onThinkingStep
@@ -121,8 +123,18 @@ export default function AgentChat() {
                 updateMessage(agentMsgId, { menu_result: menu, metrics });
             },
             // onDone
-            () => {
+            async () => {
                 setIsGenerating(false);
+                try {
+                    const latestMessages = useAppStore.getState().messages;
+                    const sid = useAppStore.getState().currentSessionId;
+                    const res = await saveChatSession(sid, latestMessages);
+                    if (res.success && res.session_id) {
+                        useAppStore.getState().setCurrentSessionId(res.session_id);
+                    }
+                } catch (e) {
+                    console.error("保存会话失败", e);
+                }
             },
             // onError
             (error) => {

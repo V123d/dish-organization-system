@@ -200,8 +200,9 @@ def build_day_graph() -> StateGraph:
 # ── 编排入口 ──
 async def orchestrate_menu_stream(
     user_message: str,
-    config: MenuPlanConfig,
-    current_menu: dict = None,
+    config_data: MenuPlanConfig,
+    current_menu_data: dict | None = None,
+    history: list[dict] | None = None
 ) -> AsyncGenerator[str, None]:
     
     intent_agent = AgentRegistry.get("intent-parser")
@@ -211,19 +212,20 @@ async def orchestrate_menu_stream(
         yield sse("error", {"message": "智能体未注册完备"})
         return
 
-    config_json = config.model_dump_json(indent=None)
-    config_dict = config.model_dump()
+    config_json = config_data.model_dump_json(indent=None)
+    config_dict = config_data.model_dump()
     current_menu_json = ""
-    if current_menu:
+    if current_menu_data:
         import json
-        current_menu_json = json.dumps(current_menu, ensure_ascii=False)
+        current_menu_json = json.dumps(current_menu_data, ensure_ascii=False)
 
     yield sse("thinking", {"step": {"label": "意图解析", "status": "running", "detail": "理解您的排餐诉求..."}})
 
     intent_result = await intent_agent.run(
         user_message=user_message, 
         config_json=config_json,
-        current_menu_json=current_menu_json
+        current_menu_json=current_menu_json,
+        history=history or []
     )
     include_weekends = False
     regenerate_targets = []
@@ -247,10 +249,10 @@ async def orchestrate_menu_stream(
         if budget_override is not None:
             try:
                 new_budget = float(budget_override)
-                for mc in config.meals_config:
+                for mc in config_data.meals_config:
                     mc.budget_per_person = new_budget
                 # 重新序列化以反映修改
-                config_dict = config.model_dump()
+                config_dict = config_data.model_dump()
                 logger.info(f"Budget overridden to ¥{new_budget}/人 by user intent")
             except (ValueError, TypeError):
                 logger.warning(f"Invalid budget_override value: {budget_override}")
@@ -260,8 +262,8 @@ async def orchestrate_menu_stream(
         yield sse("thinking", {"step": {"label": "意图解析", "status": "error", "detail": "解析失败"}})
         intent_summary = user_message
 
-    start = date_cls.fromisoformat(config.context_overview.schedule.start_date)
-    end = date_cls.fromisoformat(config.context_overview.schedule.end_date)
+    start = date_cls.fromisoformat(config_data.context_overview.schedule.start_date)
+    end = date_cls.fromisoformat(config_data.context_overview.schedule.end_date)
     all_dates: list[str] = []
     cur = start
     while cur <= end:
@@ -276,7 +278,7 @@ async def orchestrate_menu_stream(
 
     full_menu = {}
     
-    is_partial_mode = current_menu is not None and intent_result.get("success") and len(regenerate_targets) > 0
+    is_partial_mode = current_menu_data is not None and intent_result.get("success") and len(regenerate_targets) > 0
     dates_to_generate = set()
     locked_meals_by_date = {}
 
@@ -290,8 +292,8 @@ async def orchestrate_menu_stream(
             meals_to_regen = [rt.get("meal_name") for rt in regenerate_targets if rt.get("date") == d]
             # 如果没有包含 '全部' 也没有包含空字符串，说明是精确指定了某些餐次
             if not any(not m or m == "全部" for m in meals_to_regen):
-                if current_menu and d in current_menu:
-                    day_data = current_menu[d]
+                if current_menu_data and d in current_menu_data:
+                    day_data = current_menu_data[d]
                     # 记录并锁定那些不需要生成的餐次
                     locked_meals_by_date[d] = {
                         meal: data for meal, data in day_data.items()
@@ -368,11 +370,11 @@ async def orchestrate_menu_stream(
     # 将不需要生成的日期直接并入 full_menu，跳出 graph
     for d in all_dates:
         if is_partial_mode and d not in dates_to_generate:
-            if current_menu and d in current_menu:
-                full_menu[d] = current_menu[d]
+            if current_menu_data and d in current_menu_data:
+                full_menu[d] = current_menu_data[d]
                 # 先通知前端不需要生成的餐次
-                yield sse("menu_update", {"date": d, "meals": current_menu[d]})
-                for cats in current_menu[d].values():
+                yield sse("menu_update", {"date": d, "meals": current_menu_data[d]})
+                for cats in current_menu_data[d].values():
                     for cat_name, dishes in cats.items():
                         selected_dishes_history.extend([(d, cat_name, dish.get("name", "")) for dish in dishes])
         else:
@@ -568,6 +570,7 @@ async def orchestrate_menu_stream(
             "avg_nutrition_score": final_check["metrics"].get("avg_nutrition_score", 0),
             "repeat_rate": final_check["metrics"].get("repeat_rate", 0),
             "alert_count": final_check["metrics"].get("alert_count", 0),
+            "quota_compliance": final_check["metrics"].get("quota_compliance", []),
         }
 
         final_alerts_readable = [

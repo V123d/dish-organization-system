@@ -1,6 +1,7 @@
 /* ========== API 调用服务层 ========== */
 import type { MenuPlanConfig, WeeklyMenu, DashboardMetrics, DishInfo, AgentInfo } from '../types';
 import { useAuthStore } from '../stores/auth-store';
+import { useAppStore } from '../stores/app-store';
 
 const API_BASE = '/api';
 
@@ -14,6 +15,7 @@ async function fetchWithAuth(url: string, options: RequestInit = {}) {
     const res = await fetch(url, { ...options, headers });
     if (res.status === 401) {
         useAuthStore.getState().logout();
+        useAppStore.getState().resetAll();
         throw new Error("认证已过期，请重新登录");
     }
     return res;
@@ -65,6 +67,7 @@ export interface ConstraintAlert {
 /** 发送排菜指令（SSE 流式返回） */
 export async function sendChatMessage(
     userMessage: string,
+    history: any[],
     config: MenuPlanConfig,
     currentMenu: WeeklyMenu | null,
     onThinkingStep: (step: { label: string; status: string; detail?: string }) => void,
@@ -78,7 +81,7 @@ export async function sendChatMessage(
     abortSignal?: AbortSignal,
 ): Promise<void> {
     try {
-        const bodyObj: any = { message: userMessage, config };
+        const bodyObj: any = { message: userMessage, config, history };
         if (currentMenu) {
             bodyObj.current_menu = currentMenu;
         }
@@ -255,5 +258,40 @@ export async function getHistoryDetail(id: string): Promise<{ menu: WeeklyMenu; 
     if (!res.ok) throw new Error('获取详情失败');
     const data = await res.json();
     return data.data || {};
+}
+
+// ==========================
+// 会话记录接口 (Chat Sessions)
+// ==========================
+
+export async function saveChatSession(sessionId: string | null, messages: any[]): Promise<{ success: boolean; session_id: string; title: string }> {
+    const res = await fetchWithAuth(`${API_BASE}/chat/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId, messages }),
+    });
+    if (!res.ok) throw new Error('保存会话失败');
+    return await res.json();
+}
+
+export async function getChatSessionsList(): Promise<any[]> {
+    const res = await fetchWithAuth(`${API_BASE}/chat/sessions`);
+    if (!res.ok) throw new Error('获取会话列表失败');
+    const data = await res.json();
+    return data.sessions || [];
+}
+
+export async function getChatSessionDetail(sessionId: string): Promise<any> {
+    const res = await fetchWithAuth(`${API_BASE}/chat/sessions/${sessionId}`);
+    if (!res.ok) throw new Error('获取会话详情失败');
+    const data = await res.json();
+    return data.data || {};
+}
+
+export async function deleteChatSession(sessionId: string): Promise<void> {
+    const res = await fetchWithAuth(`${API_BASE}/chat/sessions/${sessionId}`, {
+        method: 'DELETE',
+    });
+    if (!res.ok) throw new Error('删除会话失败');
 }
 

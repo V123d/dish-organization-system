@@ -10,21 +10,19 @@ import {
     AlertTriangle,
 } from 'lucide-react';
 import { useAppStore } from '../../stores/app-store';
-import type { SceneType, DiningStyleType, SoupProperty, MealConfig, DishCategory } from '../../types';
+import type { KitchenClass, DiningStyleType, MealConfig, DishCategory } from '../../types';
 import { showNotImplemented } from '../../services/api';
 
-const SCENE_OPTIONS: SceneType[] = ['幼儿园', '小学', '初中', '高中', '医院', '企业', '养老院'];
+const KITCHEN_CLASS_OPTIONS: KitchenClass[] = ['一类灶', '二类灶', '三类灶'];
 const DINING_STYLES: DiningStyleType[] = ['固定餐标', '自选打菜', '自助餐', '多套餐模式'];
-const SOUP_PROPERTIES: SoupProperty[] = ['中性', '寒性/清热', '温补/驱寒'];
 const STAPLE_OPTIONS = ['米饭', '炒饭', '面食', '包子', '饺子', '馒头', '花卷'];
-const PROCESS_TYPES = ['炒', '爆', '熘', '炸', '烹', '煎', '烧', '焖', '炖', '煮', '蒸', '烤', '烩', '卤', '拌', '凉拌', '白灼'];
 
 export default function ConfigDrawer() {
     const {
         config,
         configDrawerOpen,
         setConfigDrawerOpen,
-        updateScene,
+        updateKitchenClass,
         updateCity,
         updateSchedule,
         updateMealConfig,
@@ -107,13 +105,13 @@ export default function ConfigDrawer() {
                         <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-3">基础属性</h3>
                         <div className="grid grid-cols-2 gap-3">
                             <div>
-                                <label className="block text-xs text-text-muted mb-1">食堂场景</label>
+                                <label className="block text-xs text-text-muted mb-1">灶别标准</label>
                                 <select
-                                    value={config.context_overview.scene}
-                                    onChange={(e) => updateScene(e.target.value as SceneType)}
+                                    value={config.context_overview.kitchen_class}
+                                    onChange={(e) => updateKitchenClass(e.target.value as KitchenClass)}
                                     className="w-full px-3 py-2 rounded-lg border border-border text-sm bg-surface focus:border-primary-400 outline-none"
                                 >
-                                    {SCENE_OPTIONS.map((s) => (
+                                    {KITCHEN_CLASS_OPTIONS.map((s) => (
                                         <option key={s} value={s}>{s}</option>
                                     ))}
                                 </select>
@@ -335,53 +333,19 @@ export default function ConfigDrawer() {
                                             </div>
 
                                             {/* 汤品要求 */}
-                                            <div className="grid grid-cols-2 gap-3">
-                                                <div>
-                                                    <label className="block text-[11px] text-text-muted mb-1">汤品描述</label>
-                                                    <input
-                                                        type="text"
-                                                        value={meal.soup_requirements.description}
-                                                        onChange={(e) =>
-                                                            updateMealConfig(meal.id, {
-                                                                soup_requirements: { ...meal.soup_requirements, description: e.target.value },
-                                                            })
-                                                        }
-                                                        className="w-full px-2 py-1.5 rounded-md border border-border text-xs outline-none focus:border-primary-400"
-                                                        placeholder="如：需包含1款老火例汤"
-                                                    />
-                                                </div>
-                                                <div>
-                                                    <label className="block text-[11px] text-text-muted mb-1">汤性要求</label>
-                                                    <select
-                                                        value={meal.soup_requirements.soup_property}
-                                                        onChange={(e) =>
-                                                            updateMealConfig(meal.id, {
-                                                                soup_requirements: { ...meal.soup_requirements, soup_property: e.target.value as SoupProperty },
-                                                            })
-                                                        }
-                                                        className="w-full px-2 py-1.5 rounded-md border border-border text-xs outline-none focus:border-primary-400"
-                                                    >
-                                                        {SOUP_PROPERTIES.map((sp) => (
-                                                            <option key={sp} value={sp}>{sp}</option>
-                                                        ))}
-                                                    </select>
-                                                </div>
-                                            </div>
-
-                                            {/* 工艺约束 */}
                                             <div>
-                                                <label className="block text-[11px] text-text-muted mb-1.5">烹饪工艺约束</label>
-                                                <div className="flex flex-wrap gap-1">
-                                                    {PROCESS_TYPES.map((pt) => (
-                                                        <span
-                                                            key={pt}
-                                                            className="px-1.5 py-0.5 text-[10px] bg-gray-100 text-text-secondary rounded cursor-pointer hover:bg-primary-100 hover:text-primary-600 transition-colors"
-                                                            onClick={() => showNotImplemented('工艺数量限制控制')}
-                                                        >
-                                                            {pt}
-                                                        </span>
-                                                    ))}
-                                                </div>
+                                                <label className="block text-[11px] text-text-muted mb-1">汤品描述</label>
+                                                <input
+                                                    type="text"
+                                                    value={meal.soup_requirements.description}
+                                                    onChange={(e) =>
+                                                        updateMealConfig(meal.id, {
+                                                            soup_requirements: { ...meal.soup_requirements, description: e.target.value },
+                                                        })
+                                                    }
+                                                    className="w-full px-2 py-1.5 rounded-md border border-border text-xs outline-none focus:border-primary-400"
+                                                    placeholder="如：需包含1款老火例汤"
+                                                />
                                             </div>
 
                                             {/* 口味偏好 */}

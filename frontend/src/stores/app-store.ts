@@ -6,34 +6,55 @@ import type {
     ChatMessage,
     WeeklyMenu,
     DashboardMetrics,
-    SceneType,
+    KitchenClass,
     AgentInfo,
 } from '../types';
 import type { HistoryRecord } from '../services/api';
 
 /** 生成默认的餐次配置 */
 function createDefaultMealConfig(name: string, id: string): MealConfig {
+    let budget = 100;
+    let categories = [
+        { name: '大荤', count: 1 },
+        { name: '小荤', count: 1 },
+        { name: '素菜', count: 2 },
+        { name: '主食', count: 1 },
+        { name: '汤', count: 1 },
+        { name: '水果', count: 1 },
+    ];
+
+    if (name === '早餐') {
+        budget = 50;
+        categories = [
+            { name: '主食', count: 1 },
+            { name: '素菜', count: 2 },
+            { name: '牛奶', count: 1 },
+            { name: '甜点', count: 1 },
+        ];
+    } else if (name === '午餐') {
+        budget = 100;
+        categories = [
+            { name: '大荤', count: 1 },
+            { name: '小荤', count: 1 },
+            { name: '素菜', count: 1 },
+            { name: '凉菜', count: 1 },
+            { name: '汤', count: 1 },
+            { name: '水果', count: 1 },
+        ];
+    }
+
     return {
         id,
         meal_name: name,
-        enabled: name === '午餐' || name === '晚餐',
-        diners_count: name === '午餐' ? 1200 : name === '晚餐' ? 800 : 500,
+        enabled: true,
+        diners_count: 500,
         intake_rate: 60,
-        budget_per_person: name === '午餐' ? 15 : name === '晚餐' ? 12 : 8,
+        budget_per_person: budget,
         dining_style: { type: '固定餐标', cost_type: '按食材成本核算' },
         meal_specific_constraints: { required_ingredients: [], mandatory_dishes: [] },
-        dish_structure: {
-            categories: [
-                { name: '大荤', count: 2 },
-                { name: '小荤', count: 1 },
-                { name: '素菜', count: 1 },
-                { name: '主食', count: 1 },
-                { name: '汤', count: 1 },
-            ],
-        },
-        staple_types: ['米饭'],
-        soup_requirements: { description: '', soup_property: '中性' },
-        process_limits: [],
+        dish_structure: { categories },
+        staple_types: name === '早餐' ? ['包子', '饺子', '馒头'] : ['米饭'],
+        soup_requirements: { description: '' },
         flavor_preferences: '',
     };
 }
@@ -56,7 +77,7 @@ interface AppState {
     /** 规则配置 */
     config: MenuPlanConfig;
     setConfig: (config: MenuPlanConfig) => void;
-    updateScene: (scene: SceneType) => void;
+    updateKitchenClass: (kitchen_class: KitchenClass) => void;
     updateCity: (city: string) => void;
     updateSchedule: (start: string, end: string) => void;
     updateMealConfig: (mealId: string, updates: Partial<MealConfig>) => void;
@@ -89,6 +110,12 @@ interface AppState {
     historyRecords: HistoryRecord[];
     setHistoryRecords: (records: HistoryRecord[]) => void;
 
+    /** 对话会话列表 */
+    currentSessionId: string | null;
+    setCurrentSessionId: (id: string | null) => void;
+    sessionsList: any[];
+    setSessionsList: (sessions: any[]) => void;
+
     /** 智能体注册表 */
     agents: AgentInfo[];
     setAgents: (agents: AgentInfo[]) => void;
@@ -101,6 +128,9 @@ interface AppState {
     abortController: AbortController | null;
     setAbortController: (ac: AbortController | null) => void;
     stopGeneration: () => void;
+
+    /** 退出登录时重置所有排菜相关状态 */
+    resetAll: () => void;
 }
 
 const schedule = getNextWeekRange();
@@ -108,7 +138,7 @@ const schedule = getNextWeekRange();
 export const useAppStore = create<AppState>((set) => ({
     config: {
         context_overview: {
-            scene: '高中' as SceneType,
+            kitchen_class: '一类灶' as KitchenClass,
             city: '广州市',
             schedule,
         },
@@ -142,9 +172,9 @@ export const useAppStore = create<AppState>((set) => ({
 
     setConfig: (config) => set({ config }),
 
-    updateScene: (scene) =>
+    updateKitchenClass: (kitchen_class) =>
         set((s) => ({
-            config: { ...s.config, context_overview: { ...s.config.context_overview, scene } },
+            config: { ...s.config, context_overview: { ...s.config.context_overview, kitchen_class } },
         })),
 
     updateCity: (city) =>
@@ -213,7 +243,7 @@ export const useAppStore = create<AppState>((set) => ({
             id: 'welcome',
             role: 'assistant',
             content:
-                '您好！我是走云智能排菜助手 🍽️ 请告诉我您的排餐需求，例如：\n\n"帮我排下周一到周五的午餐和晚餐菜单，要求严格控制大荤成本，并规避海鲜过敏原。"',
+                '您好！我是走云智能排菜助手 🍽️ 请告诉我您的排餐需求，例如：\n\n"帮我排下周一到周五的菜单，要求严格控制大荤成本，并规避海鲜过敏原。"',
             timestamp: Date.now(),
         },
     ],
@@ -259,6 +289,12 @@ export const useAppStore = create<AppState>((set) => ({
     historyRecords: [],
     setHistoryRecords: (records) => set({ historyRecords: records }),
 
+    // 对话会话列表
+    currentSessionId: null,
+    setCurrentSessionId: (id) => set({ currentSessionId: id }),
+    sessionsList: [],
+    setSessionsList: (sessions) => set({ sessionsList: sessions }),
+
     // 智能体注册表
     agents: [],
     setAgents: (agents) => set({ agents }),
@@ -275,5 +311,25 @@ export const useAppStore = create<AppState>((set) => ({
             s.abortController.abort();
         }
         return { isGenerating: false, abortController: null };
+    }),
+
+    resetAll: () => set({
+        messages: [
+            {
+                id: 'welcome',
+                role: 'assistant',
+                content:
+                    '您好！我是走云智能排菜助手 🍽️ 请告诉我您的排餐需求，例如：\n\n"帮我排下周一到周五的菜单，要求严格控制大荤成本，并规避海鲜过敏原。"',
+                timestamp: Date.now(),
+            },
+        ],
+        weeklyMenu: null,
+        metrics: null,
+        historyRecords: [],
+        currentSessionId: null,
+        agents: [],
+        configDrawerOpen: false,
+        isGenerating: false,
+        abortController: null,
     }),
 }));

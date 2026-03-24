@@ -2,6 +2,7 @@ import asyncio
 from app.database import engine, Base
 from app.models.user import User
 from app.models.history import MenuHistory
+from app.models.chat_session import ChatSession
 
 async def init():
     async with engine.begin() as conn:

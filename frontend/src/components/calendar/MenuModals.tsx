@@ -65,8 +65,8 @@ export function PreviewModal({ isOpen, onClose }: { isOpen: boolean; onClose: ()
                                                                 <div className="space-y-1.5 flex flex-col items-center">
                                                                     {dishes.map((dish, i) => (
                                                                         <div key={i} className="text-center">
-                                                                            <span className="font-medium text-text-primary block">{dish.name}</span>
-                                                                            <span className="text-xs text-text-muted mx-1">¥{dish.cost_per_serving}</span>
+                                                                            <span className="font-medium text-text-primary block">{(dish.name || '').replace(/_\d+$/, '')}</span>
+                                                                            <span className="text-xs text-text-muted mx-1">¥{Math.round(dish.cost_per_serving || 0)}</span>
                                                                         </div>
                                                                     ))}
                                                                 </div>
@@ -290,33 +290,22 @@ export function RecipeModal({ isOpen, onClose, dish }: { isOpen: boolean; onClos
                 
                 <div className="p-6 bg-surface overflow-auto max-h-[70vh]">
                     <div className="mb-6 text-center">
-                        <h3 className="text-2xl font-bold text-text-primary">{dish.name}</h3>
-                        <p className="text-sm text-text-muted mt-1">工艺: {dish.process_type} | 预估单人成本: ¥{dish.cost_per_serving}</p>
+                        <h3 className="text-2xl font-bold text-text-primary">{(dish.name || '').replace(/_\d+$/, '')}</h3>
+                        <p className="text-sm text-text-muted mt-1">口味: {dish.flavor || '未知'} | 预估单人成本: ¥{Math.round(dish.cost_per_serving || 0)}</p>
                     </div>
 
-                    {dish.main_ingredients && (
+                    {dish.ingredients_quantified && Array.isArray(dish.ingredients_quantified) && dish.ingredients_quantified.length > 0 && (
                         <div className="mb-6 bg-white p-4 rounded-xl border border-border shadow-sm">
                             <h4 className="font-semibold text-sm mb-3 text-text-secondary flex items-center gap-2">
                                 <Info size={16} className="text-primary-500" />
-                                食材明细
+                                定量配料标准 (每人份)
                             </h4>
-                            <div className="space-y-2 text-sm">
-                                <div className="flex justify-between border-b border-gray-100 pb-1">
-                                    <span className="text-text-muted">主料</span>
-                                    <span className="font-medium text-text-primary">{dish.main_ingredients.join('、 ')}</span>
-                                </div>
-                                {dish.side_ingredients && dish.side_ingredients.length > 0 && (
-                                    <div className="flex justify-between border-b border-gray-100 pb-1 pt-1">
-                                        <span className="text-text-muted">辅料</span>
-                                        <span className="font-medium text-text-primary">{dish.side_ingredients.join('、 ')}</span>
-                                    </div>
-                                )}
-                                {dish.seasonings && dish.seasonings.length > 0 && (
-                                    <div className="flex justify-between pt-1">
-                                        <span className="text-text-muted">调料</span>
-                                        <span className="text-text-secondary w-2/3 text-right">{dish.seasonings.join('、 ')}</span>
-                                    </div>
-                                )}
+                            <div className="text-sm text-text-primary flex flex-wrap gap-2 mt-2">
+                                {(dish.ingredients_quantified as Array<{name: string, category: string, amount_g: number}>).map((ing, i) => (
+                                    <span key={i} className="px-2 py-1 bg-surface border border-border-light rounded-md text-xs">
+                                        {ing.name} <span className="text-primary-600 font-medium">{ing.amount_g}g</span>
+                                    </span>
+                                ))}
                             </div>
                         </div>
                     )}

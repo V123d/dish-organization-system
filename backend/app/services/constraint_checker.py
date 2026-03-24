@@ -57,11 +57,6 @@ async def _check_menu(menu: dict, config: Any, daily_configs: dict = None) -> di
                 cat["name"]: cat["count"]
                 for cat in mc.get("dish_structure", {}).get("categories", [])
             }
-            meal_process_limits[meal_name] = {
-                pl["process_type"]: pl["max_count"]
-                for pl in mc.get("process_limits", [])
-                if pl.get("process_type") and pl.get("max_count")
-            }
 
     ALLOW_REPEAT_CATEGORIES: set[str] = {"主食", "汤"}
     EVERY_OTHER_DAY_CATEGORIES: set[str] = {"素菜"}
@@ -77,11 +72,27 @@ async def _check_menu(menu: dict, config: Any, daily_configs: dict = None) -> di
                         dish_ids.add(dish["id"])
 
     dish_index = {}
+    standard_quotas_dict = {}
+    ingredient_usage = {}
+    total_person_days = 0
+
     if dish_ids:
         async with AsyncSessionLocal() as session:
             result = await session.execute(select(Dish).where(Dish.id.in_(list(dish_ids))))
             for d in result.scalars().all():
                 dish_index[d.id] = d.__dict__
+            
+            from ..models.standard_quota import StandardQuota
+            kitchen_class = "一类灶"
+            if isinstance(config, dict):
+                kitchen_class = config.get("context_overview", {}).get("kitchen_class", "一类灶")
+            else:
+                kitchen_class = config.context_overview.kitchen_class
+                
+            sq_res = await session.execute(select(StandardQuota).where(StandardQuota.class_type == kitchen_class))
+            sq = sq_res.scalars().first()
+            if sq:
+                standard_quotas_dict = sq.quotas
 
     for date, meals in menu.items():
         daily_dish_names: set[str] = set()
@@ -91,13 +102,14 @@ async def _check_menu(menu: dict, config: Any, daily_configs: dict = None) -> di
             d_list = d_conf.get("meals_config", []) if isinstance(d_conf, dict) else [m.model_dump() for m in d_conf.meals_config]
             d_meal_structures = {mc["meal_name"]: {c["name"]: c["count"] for c in mc.get("dish_structure", {}).get("categories", [])} for mc in d_list if mc.get("enabled", True)}
             d_meal_budgets = {mc["meal_name"]: mc.get("budget_per_person", 999.0) for mc in d_list if mc.get("enabled", True)}
-            d_meal_process_limits = {mc["meal_name"]: {pl["process_type"]: pl["max_count"] for pl in mc.get("process_limits", []) if pl.get("process_type") and pl.get("max_count")} for mc in d_list if mc.get("enabled", True)}
             d_meal_diners = {mc["meal_name"]: mc.get("diners_count", 1) for mc in d_list if mc.get("enabled", True)}
         else:
             d_meal_structures = meal_structures
             d_meal_budgets = meal_budgets
-            d_meal_process_limits = meal_process_limits
             d_meal_diners = meal_diners
+
+        daily_diners = max(d_meal_diners.values()) if d_meal_diners else 1
+        total_person_days += daily_diners
 
         for meal_name, categories in meals.items():
             meal_cost_per_person = 0.0
@@ -121,8 +133,16 @@ async def _check_menu(menu: dict, config: Any, daily_configs: dict = None) -> di
                     total_dishes += 1
 
                     full = dish_index.get(dish_id, dish) if dish_id else dish
-                    ingredients: list[str] = full.get("main_ingredients", [])
+                    quantified = full.get("ingredients_quantified", [])
+                    ingredients: list[str] = [i.get("name") for i in quantified if isinstance(i, dict)]
                     cost: float = float(full.get("cost_per_serving", 0))
+
+                    for quant in quantified:
+                        if isinstance(quant, dict):
+                            cat = quant.get("category") or quant.get("name")
+                            amt_g = float(quant.get("amount_g") or quant.get("amount") or quant.get("value") or 0)
+                            if cat and amt_g > 0:
+                                ingredient_usage[cat] = ingredient_usage.get(cat, 0.0) + (amt_g * diners)
 
                     for ingredient in ingredients:
                         if ingredient in red_lines:
@@ -162,24 +182,7 @@ async def _check_menu(menu: dict, config: Any, daily_configs: dict = None) -> di
                         score = min(100.0, max(0.0, 100.0 - abs(calories - 300) / 3.0))
                         nutrition_scores.append(score)
 
-            limits = d_meal_process_limits.get(meal_name, {})
-            if limits:
-                process_counter: Counter[str] = Counter()
-                for cat_dishes in categories.values():
-                    for dish in cat_dishes:
-                        full_d = dish_index.get(dish.get("id"), dish) if dish.get("id") else dish
-                        proc = full_d.get("process_type", "")
-                        if proc:
-                            process_counter[proc] += 1
-                for proc, count in process_counter.items():
-                    max_count = limits.get(proc)
-                    if max_count is not None and count > max_count:
-                        alerts.append(ConstraintAlert(
-                            type="PROCESS_CONCENTRATION",
-                            date=date,
-                            meal_name=meal_name,
-                            detail=f"工艺「{proc}」出现 {count} 道，限制 {max_count} 道"
-                        ).model_dump())
+
 
             if meal_cost_per_person > budget * 1.05:
                 alerts.append(ConstraintAlert(
@@ -236,6 +239,21 @@ async def _check_menu(menu: dict, config: Any, daily_configs: dict = None) -> di
     total_cost = _calc_total_cost(menu, meal_diners, daily_configs, dish_index)
     avg_nutrition = round(sum(nutrition_scores) / len(nutrition_scores), 1) if nutrition_scores else 0.0
 
+    quota_compliance = []
+    if standard_quotas_dict and total_person_days > 0:
+        for cat_name, std_grams in standard_quotas_dict.items():
+            actual_total = ingredient_usage.get(cat_name, 0.0)
+            actual_per_person_day = actual_total / total_person_days
+            std_grams = float(std_grams)
+            if std_grams > 0:
+                rate = actual_per_person_day / std_grams
+                quota_compliance.append({
+                    "name": cat_name,
+                    "actual": round(actual_per_person_day, 1),
+                    "standard": round(std_grams, 1),
+                    "rate": round(rate, 2)
+                })
+
     return {
         "success": True,
         "passed": len(alerts) == 0,
@@ -247,6 +265,7 @@ async def _check_menu(menu: dict, config: Any, daily_configs: dict = None) -> di
             "alert_count": len(alerts),
             "total_dishes": total_dishes,
             "unique_dishes": unique_count,
+            "quota_compliance": quota_compliance,
         },
     }
 

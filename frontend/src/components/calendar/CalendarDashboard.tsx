@@ -241,6 +241,41 @@ export default function CalendarDashboard() {
                 />
             </div>
 
+            {/* 灶别配额达标度对比面板 */}
+            {metrics?.quota_compliance && metrics.quota_compliance.length > 0 && (
+                <div className="px-5 pb-3 animate-fade-in">
+                    <div className="bg-white rounded-xl border border-border-light shadow-sm p-4">
+                        <h3 className="text-xs font-semibold text-text-secondary mb-3 flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-primary-500"></span>
+                            【{config.context_overview.kitchen_class}】配料消耗预估达标度 (克/人/天)
+                        </h3>
+                        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-6">
+                            {metrics.quota_compliance.map((quota, idx) => {
+                                const percent = Math.min(Math.round(quota.rate * 100), 100);
+                                const isUnder = quota.rate < 0.8;
+                                const isOver = quota.rate > 1.2;
+                                const colorClass = isUnder ? 'bg-amber-400' : isOver ? 'bg-red-400' : 'bg-emerald-400';
+                                
+                                return (
+                                    <div key={idx} className="space-y-1.5">
+                                        <div className="flex items-center justify-between text-[11px]">
+                                            <span className="font-medium text-text-primary">{quota.name}</span>
+                                            <span className="text-text-muted">{quota.actual} / {quota.standard}g</span>
+                                        </div>
+                                        <div className="w-full h-1.5 rounded-full bg-gray-100 overflow-hidden relative">
+                                            <div 
+                                                className={`absolute top-0 left-0 h-full transition-all duration-700 ease-out ${colorClass}`} 
+                                                style={{ width: `${percent}%` }}
+                                            />
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* 日历网格 */}
             <div className="flex-1 px-5 pb-4 overflow-auto">
                 <div className="bg-white rounded-xl border border-border-light shadow-sm overflow-x-auto">
@@ -304,7 +339,7 @@ export default function CalendarDashboard() {
                                                                                 : 'bg-primary-50/70 border border-primary-100 text-primary-700'
                                                                             }`}
                                                                         onClick={() => setRecipeDish(dish)}
-                                                                        title={`${dish.name}\n工艺: ${dish.process_type}\n成本: ¥${dish.cost_per_serving}`}
+                                                                        title={`${(dish.name || '').replace(/_\d+$/, '')}\n口味: ${dish.flavor || '未知'}\n成本: ¥${Math.round(dish.cost_per_serving || 0)}`}
                                                                     >
                                                                         <button 
                                                                             onClick={(e) => handleRemoveDish(e, d, meal.meal_name, cat.name, dish.id)}
@@ -312,9 +347,9 @@ export default function CalendarDashboard() {
                                                                         >
                                                                             <X size={10} />
                                                                         </button>
-                                                                        <p className="font-medium truncate">{dish.name}</p>
+                                                                        <p className="font-medium truncate">{(dish.name || '').replace(/_\d+$/, '')}</p>
                                                                         <p className="text-[9px] text-text-muted mt-0.5">
-                                                                            ¥{dish.cost_per_serving} · {dish.process_type}
+                                                                            ¥{Math.round(dish.cost_per_serving || 0)} · {dish.flavor || '未知'}
                                                                         </p>
                                                                     </div>
                                                             ))}
@@ -384,12 +419,12 @@ export default function CalendarDashboard() {
                                         className="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-primary-50 cursor-pointer transition-colors"
                                     >
                                         <div>
-                                            <p className="text-sm font-medium">{dish.name}</p>
+                                            <p className="text-sm font-medium">{(dish.name || '').replace(/_\d+$/, '')}</p>
                                             <p className="text-[10px] text-text-muted">
-                                                {dish.category} · {dish.process_type} · {dish.main_ingredients.join(', ')}
+                                                {dish.category} · {dish.flavor || '未知'}
                                             </p>
                                         </div>
-                                        <span className="text-xs text-primary-600 font-medium">¥{dish.cost_per_serving}</span>
+                                        <span className="text-xs text-primary-600 font-medium">¥{Math.round(dish.cost_per_serving || 0)}</span>
                                     </div>
                                 ))
                             ) : searchQuery ? (

@@ -53,8 +53,8 @@ async def _enrich_menu_data(menu: dict) -> dict:
                     "id": d.id,
                     "name": d.name,
                     "category": d.category,
-                    "main_ingredients": d.main_ingredients,
-                    "process_type": d.process_type,
+                    "ingredients_quantified": d.ingredients_quantified,
+                    "applicable_meals": d.applicable_meals,
                     "flavor": d.flavor,
                     "cost_per_serving": d.cost_per_serving,
                     "nutrition": d.nutrition,
@@ -78,8 +78,8 @@ async def _enrich_menu_data(menu: dict) -> dict:
                             "id": dish_id or 0,
                             "name": dish.get("name", "未知菜品"),
                             "category": cat_name,
-                            "main_ingredients": dish.get("main_ingredients", []),
-                            "process_type": dish.get("process_type", ""),
+                            "ingredients_quantified": dish.get("ingredients_quantified", []),
+                            "applicable_meals": dish.get("applicable_meals", []),
                             "flavor": dish.get("flavor", ""),
                             "cost_per_serving": dish.get("cost_per_serving", 0),
                             "nutrition": dish.get("nutrition", {
@@ -100,8 +100,7 @@ async def search_dishes(query: str) -> list[dict[str, Any]]:
         result = await session.execute(
             select(Dish).where(
                 Dish.name.ilike(f"%{query_lower}%") |
-                Dish.category.ilike(f"%{query_lower}%") |
-                Dish.process_type.ilike(f"%{query_lower}%")
+                Dish.category.ilike(f"%{query_lower}%")
             ).limit(20)
         )
         dishes = result.scalars().all()
@@ -111,8 +110,8 @@ async def search_dishes(query: str) -> list[dict[str, Any]]:
                 "id": d.id,
                 "name": d.name,
                 "category": d.category,
-                "main_ingredients": d.main_ingredients,
-                "process_type": d.process_type,
+                "ingredients_quantified": d.ingredients_quantified,
+                "applicable_meals": d.applicable_meals,
                 "flavor": d.flavor,
                 "cost_per_serving": d.cost_per_serving,
                 "nutrition": d.nutrition,

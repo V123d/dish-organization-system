@@ -14,7 +14,6 @@ class DishCategory(BaseModel):
 class SoupRequirement(BaseModel):
     """汤品要求"""
     description: str = ""
-    soup_property: str = "中性"
 
 
 class DiningStyle(BaseModel):
@@ -47,7 +46,6 @@ class MealConfig(BaseModel):
     dish_structure: DishStructure = Field(default_factory=DishStructure)
     staple_types: list[str] = Field(default_factory=list)
     soup_requirements: SoupRequirement = Field(default_factory=SoupRequirement)
-    process_limits: list[dict] = Field(default_factory=list)
     flavor_preferences: str = ""
 
 
@@ -80,7 +78,7 @@ class Schedule(BaseModel):
 
 class ContextOverview(BaseModel):
     """上下文概览"""
-    scene: str = "高中"
+    kitchen_class: str = "一类灶"
     city: str = "广州市"
     schedule: Schedule
 
@@ -97,6 +95,8 @@ class ChatRequest(BaseModel):
     message: str
     config: MenuPlanConfig
     current_menu: Optional[dict] = None
+    session_id: Optional[str] = None
+    history: list[dict] = Field(default_factory=list)
 
 
 class NotImplementedResponse(BaseModel):
@@ -115,6 +115,13 @@ class ConstraintAlert(BaseModel):
     detail: str
 
 
+class QuotaCompliance(BaseModel):
+    """灶别标准达标度"""
+    name: str
+    actual: float
+    standard: float
+    rate: float
+
 class CheckMetrics(BaseModel):
     """校验指标汇总"""
     total_cost: float
@@ -123,3 +130,25 @@ class CheckMetrics(BaseModel):
     alert_count: int
     total_dishes: int
     unique_dishes: int
+    quota_compliance: list[QuotaCompliance] = Field(default_factory=list)
+
+
+class ChatSessionCreate(BaseModel):
+    """创建或保存对话会话"""
+    session_id: Optional[str] = None
+    messages: list[dict] = Field(default_factory=list)
+
+
+class ChatSessionItem(BaseModel):
+    """对话会话列表项"""
+    id: str
+    title: str
+    updated_at: str
+
+
+class ChatSessionDetail(BaseModel):
+    """对话会话详情"""
+    id: str
+    title: str
+    messages: list[dict]
+    updated_at: str

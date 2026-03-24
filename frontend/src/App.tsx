@@ -1,15 +1,26 @@
 /* ========== 主应用入口 ========== */
 import './index.css';
 import { useAuthStore } from './stores/auth-store';
+import { useAppStore } from './stores/app-store';
 import AuthPage from './pages/AuthPage';
 import ContextHeader from './components/layout/ContextHeader';
 import AgentPanel from './components/layout/AgentPanel';
 import AgentChat from './components/chat/AgentChat';
 import CalendarDashboard from './components/calendar/CalendarDashboard';
 import ConfigDrawer from './components/config-drawer/ConfigDrawer';
+import HistoryDrawer from './components/chat/HistoryDrawer';
+import { useState } from 'react';
+import { Clock } from 'lucide-react';
 
 function App() {
   const { token, user, logout } = useAuthStore();
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const resetAll = useAppStore(state => state.resetAll);
+
+  const handleLogout = () => {
+    logout();
+    resetAll();
+  };
 
   if (!token) {
     return <AuthPage onLoginSuccess={() => {}} />;
@@ -28,6 +39,14 @@ function App() {
         </div>
         
         <div className="flex items-center gap-4">
+          <button
+            onClick={() => setHistoryOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-text-secondary hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+          >
+            <Clock size={16} />
+            历史对话
+          </button>
+          
           <div className="flex items-center gap-2">
             <div className="w-6 h-6 rounded-full bg-primary-100 flex items-center justify-center">
               <span className="text-xs font-bold text-primary-700">{user?.username?.[0]?.toUpperCase()}</span>
@@ -35,7 +54,7 @@ function App() {
             <span className="text-sm font-medium text-text-secondary">{user?.username}</span>
           </div>
           <button 
-            onClick={logout} 
+            onClick={handleLogout} 
             className="text-xs font-medium px-3 py-1.5 rounded-lg bg-gray-50 text-text-muted hover:bg-red-50 hover:text-red-600 transition-colors"
           >
             退出登录
@@ -67,6 +86,9 @@ function App() {
 
       {/* 配置抽屉 (浮层) */}
       <ConfigDrawer />
+      
+      {/* 历史记录抽屉 */}
+      <HistoryDrawer isOpen={historyOpen} onClose={() => setHistoryOpen(false)} />
     </div>
   );
 }
