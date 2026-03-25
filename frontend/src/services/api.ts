@@ -191,6 +191,17 @@ export async function getDishLibrary(): Promise<DishInfo[]> {
     }
 }
 
+/** 获取所有菜品分类 */
+export async function getDishCategories(): Promise<string[]> {
+    try {
+        const res = await fetchWithAuth(`${API_BASE}/dishes/categories`);
+        if (!res.ok) throw new Error('获取分类失败');
+        return await res.json();
+    } catch {
+        return [];
+    }
+}
+
 /** 通用待开发提示 */
 export function showNotImplemented(featureName: string): void {
     // 使用简单的 toast 通知

@@ -37,3 +37,11 @@ async def dishes_library():
                 "tags": d.tags,
             } for d in dishes
         ]
+
+@router.get("/categories")
+async def dishes_categories():
+    """获取菜品库中所有不重复的分类列表"""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(Dish.category).distinct())
+        categories = [row[0] for row in result.all() if row[0]]
+        return sorted(categories)

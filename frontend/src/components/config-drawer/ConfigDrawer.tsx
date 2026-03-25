@@ -1,5 +1,5 @@
 /* ========== 深度规则配置抽屉 (Config Drawer) ========== */
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
     X,
     ChevronDown,
@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '../../stores/app-store';
 import type { KitchenClass, DiningStyleType, MealConfig, DishCategory } from '../../types';
-import { showNotImplemented } from '../../services/api';
+import { getDishCategories } from '../../services/api';
 
 const KITCHEN_CLASS_OPTIONS: KitchenClass[] = ['一类灶', '二类灶', '三类灶'];
 const DINING_STYLES: DiningStyleType[] = ['固定餐标', '自选打菜', '自助餐', '多套餐模式'];
@@ -35,6 +35,16 @@ export default function ConfigDrawer() {
     const [expandedMeals, setExpandedMeals] = useState<Set<string>>(new Set());
     const [newMealName, setNewMealName] = useState('');
     const [redLineInput, setRedLineInput] = useState(config.global_hard_constraints.red_lines.join('\n'));
+    const [availableCategories, setAvailableCategories] = useState<string[]>([]);
+    const [addingCategoryToMealId, setAddingCategoryToMealId] = useState<string | null>(null);
+    const [newHealthCondition, setNewHealthCondition] = useState('');
+    const [isAddingHealth, setIsAddingHealth] = useState(false);
+    const [newDietaryRestriction, setNewDietaryRestriction] = useState('');
+    const [isAddingDietary, setIsAddingDietary] = useState(false);
+
+    useEffect(() => {
+        getDishCategories().then(setAvailableCategories);
+    }, []);
 
     const toggleExpand = (mealId: string) => {
         const next = new Set(expandedMeals);
@@ -42,14 +52,18 @@ export default function ConfigDrawer() {
         setExpandedMeals(next);
     };
 
-    const handleAddCategory = (mealId: string, meal: MealConfig) => {
-        const name = prompt('请输入新的菜品分类名称：');
+    const handleAddCategoryClick = (mealId: string) => {
+        setAddingCategoryToMealId(mealId);
+    };
+
+    const handleSelectCategory = (mealId: string, meal: MealConfig, name: string) => {
         if (!name) return;
         updateMealConfig(mealId, {
             dish_structure: {
                 categories: [...meal.dish_structure.categories, { name, count: 1 }],
             },
         });
+        setAddingCategoryToMealId(null);
     };
 
     const handleRemoveCategory = (mealId: string, meal: MealConfig, catIndex: number) => {
@@ -117,13 +131,13 @@ export default function ConfigDrawer() {
                                 </select>
                             </div>
                             <div>
-                                <label className="block text-xs text-text-muted mb-1">所在城市</label>
+                                <label className="block text-xs text-text-muted mb-1">所属支队</label>
                                 <input
                                     type="text"
                                     value={config.context_overview.city}
                                     onChange={(e) => updateCity(e.target.value)}
                                     className="w-full px-3 py-2 rounded-lg border border-border text-sm bg-surface focus:border-primary-400 outline-none"
-                                    placeholder="输入城市名"
+                                    placeholder="输入支队名称"
                                 />
                             </div>
                         </div>
@@ -274,7 +288,7 @@ export default function ConfigDrawer() {
                                                 <div className="flex items-center justify-between mb-2">
                                                     <label className="text-[11px] text-text-muted font-medium">菜品种类结构</label>
                                                     <button
-                                                        onClick={() => handleAddCategory(meal.id, meal)}
+                                                        onClick={() => handleAddCategoryClick(meal.id)}
                                                         className="text-[10px] text-primary-500 hover:text-primary-600 flex items-center gap-0.5"
                                                     >
                                                         <Plus size={10} /> 加分类
@@ -283,12 +297,7 @@ export default function ConfigDrawer() {
                                                 <div className="flex flex-wrap gap-2">
                                                     {meal.dish_structure.categories.map((cat, i) => (
                                                         <div key={i} className="flex items-center gap-1 px-2 py-1.5 bg-surface rounded-lg border border-border-light group">
-                                                            <input
-                                                                type="text"
-                                                                value={cat.name}
-                                                                onChange={(e) => handleCategoryChange(meal.id, meal, i, { name: e.target.value })}
-                                                                className="w-12 text-xs bg-transparent outline-none text-center"
-                                                            />
+                                                            <span className="text-xs font-medium text-text-primary px-1">{cat.name}</span>
                                                             <span className="text-[10px] text-text-muted">×</span>
                                                             <input
                                                                 type="number"
@@ -305,6 +314,26 @@ export default function ConfigDrawer() {
                                                             </button>
                                                         </div>
                                                     ))}
+
+                                                    {addingCategoryToMealId === meal.id && (
+                                                        <div className="flex items-center gap-1 px-2 py-1 bg-primary-50 rounded-lg border border-primary-100 animate-pulse-subtle">
+                                                            <select
+                                                                autoFocus
+                                                                className="text-xs bg-transparent outline-none cursor-pointer py-1"
+                                                                onChange={(e) => handleSelectCategory(meal.id, meal, e.target.value)}
+                                                                onBlur={() => setAddingCategoryToMealId(null)}
+                                                                defaultValue=""
+                                                            >
+                                                                <option value="" disabled>选择分类...</option>
+                                                                {availableCategories
+                                                                    .filter(ac => !meal.dish_structure.categories.some(c => c.name === ac))
+                                                                    .map(ac => (
+                                                                        <option key={ac} value={ac}>{ac}</option>
+                                                                    ))
+                                                                }
+                                                            </select>
+                                                        </div>
+                                                    )}
                                                 </div>
                                             </div>
 
@@ -430,6 +459,45 @@ export default function ConfigDrawer() {
                                     <span>{hc.condition}</span>
                                 </label>
                             ))}
+                            {isAddingHealth ? (
+                                <div className="flex items-center gap-1 animate-in fade-in zoom-in duration-200">
+                                    <input
+                                        type="text"
+                                        value={newHealthCondition}
+                                        onChange={(e) => setNewHealthCondition(e.target.value)}
+                                        className="w-20 px-2 py-1 text-xs border border-primary-300 rounded-md outline-none"
+                                        placeholder="新状态"
+                                        autoFocus
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                if (newHealthCondition.trim()) {
+                                                    const next = [...config.global_hard_constraints.health_conditions, { condition: newHealthCondition.trim(), count: 0, enabled: true }];
+                                                    useAppStore.setState((s) => ({
+                                                        config: {
+                                                            ...s.config,
+                                                            global_hard_constraints: { ...s.config.global_hard_constraints, health_conditions: next },
+                                                        },
+                                                    }));
+                                                    setNewHealthCondition('');
+                                                }
+                                                setIsAddingHealth(false);
+                                            } else if (e.key === 'Escape') {
+                                                setIsAddingHealth(false);
+                                            }
+                                        }}
+                                        onBlur={() => {
+                                            if (!newHealthCondition.trim()) setIsAddingHealth(false);
+                                        }}
+                                    />
+                                </div>
+                            ) : (
+                                <button
+                                    onClick={() => setIsAddingHealth(true)}
+                                    className="flex items-center gap-1 px-2 py-1 border border-dashed border-border-light rounded-lg text-[10px] text-text-muted hover:border-primary-300 hover:text-primary-500 transition-colors"
+                                >
+                                    <Plus size={10} /> 自定义
+                                </button>
+                            )}
                         </div>
                     </section>
 
@@ -456,6 +524,45 @@ export default function ConfigDrawer() {
                                     <span>{dr.restriction}</span>
                                 </label>
                             ))}
+                            {isAddingDietary ? (
+                                <div className="flex items-center gap-1 animate-in fade-in zoom-in duration-200">
+                                    <input
+                                        type="text"
+                                        value={newDietaryRestriction}
+                                        onChange={(e) => setNewDietaryRestriction(e.target.value)}
+                                        className="w-20 px-2 py-1 text-xs border border-primary-300 rounded-md outline-none"
+                                        placeholder="新禁忌"
+                                        autoFocus
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                if (newDietaryRestriction.trim()) {
+                                                    const next = [...config.global_hard_constraints.dietary_restrictions, { restriction: newDietaryRestriction.trim(), count: 0, enabled: true }];
+                                                    useAppStore.setState((s) => ({
+                                                        config: {
+                                                            ...s.config,
+                                                            global_hard_constraints: { ...s.config.global_hard_constraints, dietary_restrictions: next },
+                                                        },
+                                                    }));
+                                                    setNewDietaryRestriction('');
+                                                }
+                                                setIsAddingDietary(false);
+                                            } else if (e.key === 'Escape') {
+                                                setIsAddingDietary(false);
+                                            }
+                                        }}
+                                        onBlur={() => {
+                                            if (!newDietaryRestriction.trim()) setIsAddingDietary(false);
+                                        }}
+                                    />
+                                </div>
+                            ) : (
+                                <button
+                                    onClick={() => setIsAddingDietary(true)}
+                                    className="flex items-center gap-1 px-2 py-1 border border-dashed border-border-light rounded-lg text-[10px] text-text-muted hover:border-primary-300 hover:text-primary-500 transition-colors"
+                                >
+                                    <Plus size={10} /> 自定义
+                                </button>
+                            )}
                         </div>
                     </section>
 

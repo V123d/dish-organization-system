@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Clock, FileText, Download, CheckCircle, AlertTriangle, RefreshCw, ChefHat, Info, Heart } from 'lucide-react';
+import { X, Clock, FileText, Download, CheckCircle, AlertTriangle, RefreshCw, ChefHat, Info } from 'lucide-react';
 import { useAppStore } from '../../stores/app-store';
 import { getWeekdayLabel, formatDateShort, getDateRange } from '../../utils/date';
 import { getHistoryList, getHistoryDetail, type HistoryRecord } from '../../services/api';
@@ -66,7 +66,6 @@ export function PreviewModal({ isOpen, onClose }: { isOpen: boolean; onClose: ()
                                                                     {dishes.map((dish, i) => (
                                                                         <div key={i} className="text-center">
                                                                             <span className="font-medium text-text-primary block">{(dish.name || '').replace(/_\d+$/, '')}</span>
-                                                                            <span className="text-xs text-text-muted mx-1">¥{Math.round(dish.cost_per_serving || 0)}</span>
                                                                         </div>
                                                                     ))}
                                                                 </div>
@@ -131,10 +130,6 @@ export function NutritionModal({ isOpen, onClose }: { isOpen: boolean; onClose: 
                                     <div>
                                         <p className="text-xs text-text-muted">菜品库重复率</p>
                                         <p className="text-lg font-bold text-text-primary">{metrics.repeat_rate}%</p>
-                                    </div>
-                                    <div>
-                                        <p className="text-xs text-text-muted">总估测成本</p>
-                                        <p className="text-lg font-bold text-text-primary">¥{metrics.total_cost}</p>
                                     </div>
                                     <div>
                                         <p className="text-xs text-text-muted">合规告警项</p>
@@ -243,8 +238,7 @@ export function HistoryModal({ isOpen, onClose }: { isOpen: boolean; onClose: ()
                                         <p className="text-xs text-text-muted mt-1">{new Date(r.timestamp).toLocaleString()}</p>
                                         {r.metrics && (
                                             <p className="text-xs text-text-secondary mt-2 flex gap-3">
-                                                <span>成本: ¥{r.metrics.total_cost}</span>
-                                                <span>营养: {r.metrics.avg_nutrition_score}分</span>
+                                                {/* 指标已按需隐藏 */}
                                             </p>
                                         )}
                                     </div>
@@ -291,7 +285,7 @@ export function RecipeModal({ isOpen, onClose, dish }: { isOpen: boolean; onClos
                 <div className="p-6 bg-surface overflow-auto max-h-[70vh]">
                     <div className="mb-6 text-center">
                         <h3 className="text-2xl font-bold text-text-primary">{(dish.name || '').replace(/_\d+$/, '')}</h3>
-                        <p className="text-sm text-text-muted mt-1">口味: {dish.flavor || '未知'} | 预估单人成本: ¥{Math.round(dish.cost_per_serving || 0)}</p>
+                        <p className="text-sm text-text-muted mt-1">口味: {dish.flavor || '未知'}</p>
                     </div>
 
                     {dish.ingredients_quantified && Array.isArray(dish.ingredients_quantified) && dish.ingredients_quantified.length > 0 && (
@@ -310,32 +304,6 @@ export function RecipeModal({ isOpen, onClose, dish }: { isOpen: boolean; onClos
                         </div>
                     )}
 
-                    {dish.nutrition && (
-                        <div className="bg-white p-4 rounded-xl border border-border shadow-sm">
-                            <h4 className="font-semibold text-sm mb-3 text-text-secondary flex items-center gap-2">
-                                <Heart size={16} className="text-red-400" />
-                                营养参考 (每单人份)
-                            </h4>
-                            <div className="grid grid-cols-4 gap-2 text-center text-sm">
-                                <div className="bg-orange-50 rounded-lg p-2">
-                                    <p className="text-[10px] text-orange-600/70 mb-1">热量</p>
-                                    <p className="font-semibold text-orange-700">{dish.nutrition.calories}<span className="text-[10px] font-normal ml-0.5">kcal</span></p>
-                                </div>
-                                <div className="bg-blue-50 rounded-lg p-2">
-                                    <p className="text-[10px] text-blue-600/70 mb-1">蛋白质</p>
-                                    <p className="font-semibold text-blue-700">{dish.nutrition.protein}<span className="text-[10px] font-normal ml-0.5">g</span></p>
-                                </div>
-                                <div className="bg-yellow-50 rounded-lg p-2">
-                                    <p className="text-[10px] text-yellow-600/70 mb-1">脂肪</p>
-                                    <p className="font-semibold text-yellow-700">{dish.nutrition.fat}<span className="text-[10px] font-normal ml-0.5">g</span></p>
-                                </div>
-                                <div className="bg-green-50 rounded-lg p-2">
-                                    <p className="text-[10px] text-green-600/70 mb-1">碳水</p>
-                                    <p className="font-semibold text-green-700">{dish.nutrition.carbs}<span className="text-[10px] font-normal ml-0.5">g</span></p>
-                                </div>
-                            </div>
-                        </div>
-                    )}
                 </div>
             </div>
         </div>

@@ -1,6 +1,6 @@
 /* ========== 智能排菜对话窗口 (Agent Chat Window) ========== */
 import { useState, useRef, useEffect } from 'react';
-import { Send, Sparkles, Settings2, CheckCircle2, Loader2, AlertCircle, Bot, User } from 'lucide-react';
+import { Send, Settings2, CheckCircle2, Loader2, AlertCircle, Bot, User } from 'lucide-react';
 import { useAppStore } from '../../stores/app-store';
 import { sendChatMessage, saveChatSession } from '../../services/api';
 import type { ConstraintAlert } from '../../services/api';
@@ -64,8 +64,8 @@ export default function AgentChat() {
         const agentMsgId = generateId();
         const thinkingSteps: ThinkingStep[] = [
             { label: '意图解析', status: 'pending' },
-            { label: '食材成本计算', status: 'pending' },
-            { label: '菜单生成', status: 'pending' },
+            { label: '生成菜单', status: 'pending' },
+            { label: '成本计算', status: 'pending' },
             { label: '约束校验', status: 'pending' },
         ];
         addMessage({
@@ -95,9 +95,9 @@ export default function AgentChat() {
             currentMenuContext,
             // onThinkingStep
             (step) => {
-                // 使用包含匹配，兼容后端动态附加日期后缀的 label（如 "约束校验 (2026-03-23)"）
+                // 使用模糊匹配，兼容后端动态附加日期后缀或组合标签（如 "生成菜单 (2026-03-24)" 或 "数据补全.../食材成本计算"）
                 const matchLabel = (existing: string, incoming: string) =>
-                    existing === incoming || incoming.startsWith(existing);
+                    existing === incoming || incoming.includes(existing);
                 updateMessage(agentMsgId, {
                     thinking_steps: thinkingSteps.map((s) =>
                         matchLabel(s.label, step.label)
@@ -247,43 +247,6 @@ export default function AgentChat() {
                                 </div>
                             )}
 
-                            {/* 菜单结果总结卡片 */}
-                            {msg.metrics && (
-                                <div className="mt-2 p-3 bg-gradient-to-r from-primary-50 to-accent-50 rounded-xl border border-primary-200 text-left">
-                                    <p className="text-xs font-semibold text-primary-700 mb-2 flex items-center gap-1">
-                                        <Sparkles size={12} /> 排菜完成总结
-                                    </p>
-                                    <div className="grid grid-cols-2 gap-2 text-xs">
-                                        <div className="flex justify-between">
-                                            <span className="text-text-secondary">预计总成本</span>
-                                            <span className="font-semibold text-primary-700">¥{msg.metrics.total_cost.toFixed(0)}</span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span className="text-text-secondary">营养达标率</span>
-                                            <span className="font-semibold text-primary-700">{msg.metrics.avg_nutrition_score}%</span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span className="text-text-secondary">菜品重复率</span>
-                                            <span className="font-semibold text-warm-600">{msg.metrics.repeat_rate}%</span>
-                                        </div>
-                                        <div className="flex flex-col">
-                                            <div className="flex justify-between">
-                                                <span className="text-text-secondary">约束告警</span>
-                                                <span className={`font-semibold ${msg.metrics.alert_count > 0 ? 'text-red-500' : 'text-primary-700'}`}>
-                                                    {msg.metrics.alert_count > 0 ? `${msg.metrics.alert_count}项` : '全部通过 ✓'}
-                                                </span>
-                                            </div>
-                                            {msg.metrics.alert_count > 0 && msg.metrics.alerts && msg.metrics.alerts.length > 0 && (
-                                                <div className="mt-1.5 space-y-0.5 pl-1 border-l-2 border-red-200">
-                                                    {msg.metrics.alerts.map((alertText, i) => (
-                                                        <p key={i} className="text-[10px] text-red-500 leading-relaxed">• {alertText}</p>
-                                                    ))}
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
                         </div>
                     </div>
                 ))}

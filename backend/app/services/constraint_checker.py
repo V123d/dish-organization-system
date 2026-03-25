@@ -58,7 +58,7 @@ async def _check_menu(menu: dict, config: Any, daily_configs: dict = None) -> di
                 for cat in mc.get("dish_structure", {}).get("categories", [])
             }
 
-    ALLOW_REPEAT_CATEGORIES: set[str] = {"主食", "汤"}
+    ALLOW_REPEAT_CATEGORIES: set[str] = {"汤", "主食", "面点类"}
     EVERY_OTHER_DAY_CATEGORIES: set[str] = {"素菜"}
     cross_day_tracker: dict[tuple[str, str], list[str]] = {}
 
@@ -183,7 +183,6 @@ async def _check_menu(menu: dict, config: Any, daily_configs: dict = None) -> di
                         nutrition_scores.append(score)
 
 
-
             if meal_cost_per_person > budget * 1.05:
                 alerts.append(ConstraintAlert(
                     type="BUDGET_OVERFLOW",
@@ -191,6 +190,49 @@ async def _check_menu(menu: dict, config: Any, daily_configs: dict = None) -> di
                     meal_name=meal_name,
                     detail=f"单人成本 ¥{meal_cost_per_person:.1f}，餐标 ¥{budget:.1f}，超出 {(meal_cost_per_person/budget - 1)*100:.0f}%"
                 ).model_dump())
+
+        # 菜名关键词重复检查：从配料表提取关键词，检查同一天内多道菜名是否包含相同食材词
+        # (已根据需求禁用：1. 去掉单天内菜品名称重复的约束)
+        """
+        day_all_dishes: list[dict] = []
+        for meal_name_kr, categories_kr in meals.items():
+            for cat_name_kr, dishes_kr in categories_kr.items():
+                if cat_name_kr in ALLOW_REPEAT_CATEGORIES:
+                    continue
+                for dish in dishes_kr:
+                    dish_id_kr = dish.get("id")
+                    full_kr = dish_index.get(dish_id_kr, dish) if dish_id_kr else dish
+                    day_all_dishes.append({
+                        "name": dish.get("name", ""),
+                        "meal_name": meal_name_kr,
+                        "cat_name": cat_name_kr,
+                        "ingredients": full_kr.get("ingredients_quantified", []),
+                    })
+
+        # 构建关键词库：从当天所有菜品的配料中提取配料名作为关键词
+        all_ingredient_names: set[str] = set()
+        for dd in day_all_dishes:
+            for ing in dd["ingredients"]:
+                if isinstance(ing, dict):
+                    ing_name = ing.get("name", "")
+                    if ing_name and len(ing_name) >= 2:
+                        all_ingredient_names.add(ing_name)
+
+        # 检查每个关键词在菜名中的出现次数
+        keyword_dish_map: dict[str, list[str]] = {}
+        for keyword in all_ingredient_names:
+            matching_dishes = [dd["name"] for dd in day_all_dishes if keyword in dd["name"]]
+            if len(matching_dishes) >= 2:
+                keyword_dish_map[keyword] = matching_dishes
+
+        for keyword, matched_names in keyword_dish_map.items():
+            alerts.append(ConstraintAlert(
+                type="DISH_NAME_KEYWORD_OVERLAP",
+                date=date,
+                meal_name="",
+                detail=f"同一天多道菜名包含「{keyword}」: {', '.join(matched_names)}"
+            ).model_dump())
+        """
 
     from datetime import date as date_cls
     for (dish_name, cat_name), dates in cross_day_tracker.items():
@@ -288,3 +330,120 @@ def _calc_total_cost(menu: dict, meal_diners: dict[str, int], daily_configs: dic
                     cost = float(full.get("cost_per_serving", 0))
                     total += cost * diners
     return total
+
+
+async def _check_daily_nutrition(
+    day_menu: dict,
+    config_dict: dict,
+    date_str: str,
+) -> dict:
+    """
+    单天维度的灶别营养配额达标校验。
+
+    为什么逐天校验而非全局校验：
+    等所有天生成完再检查营养达标过晚，无法在生成过程中及时修正。
+    逐天校验可以在每天生成后立即检查，不达标时触发重试。
+
+    Args:
+        day_menu:    单天菜单 {meal_name: {category: [{id, name, ...}]}}
+        config_dict: 配置字典
+        date_str:    日期字符串
+
+    Returns:
+        {
+            "passed": bool,
+            "alerts": list[dict],
+            "quota_compliance": list[dict],  # 每个配料分类的达标率
+        }
+    """
+    alerts: list[dict] = []
+
+    # 解析配置
+    meals_config_list = config_dict.get("meals_config", [])
+    meal_diners: dict[str, int] = {}
+    for mc in meals_config_list:
+        if mc.get("enabled", True):
+            meal_diners[mc["meal_name"]] = mc.get("diners_count", 1)
+
+    # 查菜品库以获取完整配料信息
+    dish_ids = set()
+    for categories in day_menu.values():
+        for dishes in categories.values():
+            for dish in dishes:
+                if dish.get("id"):
+                    dish_ids.add(dish["id"])
+
+    dish_index: dict = {}
+    standard_quotas_dict: dict = {}
+
+    if dish_ids:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(Dish).where(Dish.id.in_(list(dish_ids))))
+            for d in result.scalars().all():
+                dish_index[d.id] = d.__dict__
+
+            from ..models.standard_quota import StandardQuota
+            kitchen_class = config_dict.get("context_overview", {}).get("kitchen_class", "一类灶")
+            sq_res = await session.execute(select(StandardQuota).where(StandardQuota.class_type == kitchen_class))
+            sq = sq_res.scalars().first()
+            if sq:
+                standard_quotas_dict = sq.quotas
+
+    if not standard_quotas_dict:
+        return {"passed": True, "alerts": [], "quota_compliance": []}
+
+    # 计算当天配料消耗
+    ingredient_usage: dict[str, float] = {}
+    daily_diners = max(meal_diners.values()) if meal_diners else 1
+
+    for meal_name, categories in day_menu.items():
+        diners = meal_diners.get(meal_name, 1)
+        for cat_name, dishes in categories.items():
+            for dish in dishes:
+                dish_id = dish.get("id")
+                full = dish_index.get(dish_id, dish) if dish_id else dish
+                quantified = full.get("ingredients_quantified", [])
+                for quant in quantified:
+                    if isinstance(quant, dict):
+                        cat = quant.get("category") or quant.get("name")
+                        amt_g = float(quant.get("amount_g") or quant.get("amount") or quant.get("value") or 0)
+                        if cat and amt_g > 0:
+                            ingredient_usage[cat] = ingredient_usage.get(cat, 0.0) + (amt_g * diners)
+
+    # 与灶别标准对比
+    quota_compliance: list[dict] = []
+    nutrition_passed = True
+    deficit_items: list[str] = []
+
+    for cat_name, std_grams in standard_quotas_dict.items():
+        actual_total = ingredient_usage.get(cat_name, 0.0)
+        actual_per_person = actual_total / daily_diners if daily_diners > 0 else 0
+        std_grams_f = float(std_grams)
+        if std_grams_f > 0:
+            rate = actual_per_person / std_grams_f
+            quota_compliance.append({
+                "name": cat_name,
+                "actual": round(actual_per_person, 1),
+                "standard": round(std_grams_f, 1),
+                "rate": round(rate, 2),
+            })
+            # 达标率低于 50% 才触发告警
+            if rate < 0.5:
+                nutrition_passed = False
+                deficit_items.append(
+                    f"{cat_name}: 实际{actual_per_person:.0f}g/标准{std_grams_f:.0f}g(达标{rate*100:.0f}%)"
+                )
+
+    if not nutrition_passed:
+        alerts.append(ConstraintAlert(
+            type="NUTRITION_DEFICIT",
+            date=date_str,
+            meal_name="",
+            detail=f"当日营养配额不足: {'; '.join(deficit_items)}"
+        ).model_dump())
+
+    return {
+        "passed": nutrition_passed,
+        "alerts": alerts,
+        "quota_compliance": quota_compliance,
+    }

@@ -15,9 +15,9 @@ from datetime import date as date_cls, timedelta
 from typing import AsyncGenerator
 
 from ..schemas.chat_schema import MenuPlanConfig
-from .menu_generator import DayMenuModel
+from .menu_generator import DayMenuModel, pre_filter_candidate_dishes
 from .base_agent import AgentRegistry
-from .constraint_checker import _check_menu
+from .constraint_checker import _check_menu, _check_daily_nutrition
 from .data_enrichment import _enrich_menu_data
 from .utils import sse, extract_json, extract_partial_json
 
@@ -77,6 +77,8 @@ async def node_generate(state: dict) -> AsyncGenerator[str, None]:
         excluded_dishes=state["excluded_dishes"],
         retry_alerts=state.get("retry_alerts", []),
         locked_meals=state.get("locked_meals"),
+        candidate_dishes=state.get("candidate_dishes"),
+        standard_quota_str=state.get("standard_quota_str", "{}"),
     )
     
     raw_content = ""
@@ -102,11 +104,17 @@ async def node_generate(state: dict) -> AsyncGenerator[str, None]:
     if day_menu:
         state["day_menu"] = day_menu
         yield sse("menu_update", {"date": date_str, "meals": day_menu})
+        yield sse("thinking", {"step": {
+            "label": f"生成菜单 ({date_str})",
+            "status": "done",
+            "detail": f"{date_str} 菜单生成成功 ✓",
+        }})
     else:
         state["day_menu"] = None
         state["error"] = "未能正确格式化菜单数据"
 
 async def node_check(state: dict) -> AsyncGenerator[str, None]:
+    """约束校验节点：结构性校验 + 逐天营养达标校验"""
     date_str = state["date"]
     day_menu = state.get("day_menu")
     if not day_menu:
@@ -115,6 +123,23 @@ async def node_check(state: dict) -> AsyncGenerator[str, None]:
         
     check_result = await _check_menu({date_str: day_menu}, state["config_dict"])
     day_alerts = check_result.get("alerts", [])
+
+    # 逐天营养达标校验（仅计算展示，不影响通过判定）
+    # 为什么不作为重试约束：当前数据库配料分类标注尚不完整，
+    # 某些菜品明明含某配料但未标注，会导致误判为不达标。
+    nutrition_result = await _check_daily_nutrition(
+        day_menu=day_menu,
+        config_dict=state["config_dict"],
+        date_str=date_str,
+    )
+
+    # 推送每日营养达标数据到前端（仅展示）
+    quota_compliance = nutrition_result.get("quota_compliance", [])
+    if quota_compliance:
+        yield sse("daily_quota_update", {
+            "date": date_str,
+            "quota_compliance": quota_compliance,
+        })
     
     if day_alerts:
         yield sse("constraint_alert", {
@@ -172,6 +197,11 @@ async def node_enrich(state: dict) -> AsyncGenerator[str, None]:
         state["day_menu"] = enriched_day.get(date_str, day_menu)
         # 再推一次带完整 detail 的 update
         yield sse("menu_update", {"date": date_str, "meals": state["day_menu"]})
+        yield sse("thinking", {"step": {
+            "label": f"数据补全 ({date_str})/食材成本计算",
+            "status": "done",
+            "detail": f"{date_str} 数据补全与成本计算完成 ✓",
+        }})
 
 def check_edge(state: dict) -> str:
     if state.get("day_menu") is None:
@@ -382,6 +412,24 @@ async def orchestrate_menu_stream(
 
     date_groups = [generate_dates[i: i + GROUP_SIZE] for i in range(0, len(generate_dates), GROUP_SIZE)]
 
+    # 一次性预查全量菜品和灶别标准，避免每天重复查库
+    from ..database import AsyncSessionLocal
+    from sqlalchemy import select
+    from ..models.dish import Dish
+    from ..models.standard_quota import StandardQuota
+    import json as json_mod
+
+    async with AsyncSessionLocal() as session:
+        all_dishes_result = await session.execute(select(Dish))
+        all_dishes_cache = all_dishes_result.scalars().all()
+
+        kitchen_class = config_data.context_overview.kitchen_class
+        sq_res = await session.execute(select(StandardQuota).where(StandardQuota.class_type == kitchen_class))
+        sq = sq_res.scalars().first()
+        standard_quota_str_cache = json_mod.dumps(sq.quotas, ensure_ascii=False) if sq else "{}"
+
+    logger.info(f"Pre-fetched {len(all_dishes_cache)} dishes and standard quota for '{kitchen_class}'")
+
     graph = build_day_graph()
 
     for group in date_groups:
@@ -393,7 +441,7 @@ async def orchestrate_menu_stream(
             for prev_d, cat, d_name in selected_dishes_history:
                 prev_date_obj = date_cls.fromisoformat(prev_d)
                 diff_days = abs((target_date_obj - prev_date_obj).days)
-                if cat in {"主食", "汤"}:
+                if cat in {"汤"}:
                     continue
                 elif cat == "素菜":
                     if diff_days <= 1:
@@ -402,13 +450,25 @@ async def orchestrate_menu_stream(
                     if diff_days <= 3:
                         excluded_dishes.add(d_name)
 
+            # 预筛选候选菜品：从全量菜品库中按结构需求选出 50~100 道
+            day_config = daily_configs[d]["config"]
+            red_lines = day_config.global_hard_constraints.red_lines or []
+            candidate_dishes = pre_filter_candidate_dishes(
+                all_dishes=all_dishes_cache,
+                config=day_config,
+                red_lines=red_lines,
+                excluded_dishes=list(excluded_dishes),
+            )
+
             state = {
                 "date": d,
-                "config": daily_configs[d]["config"],
+                "config": day_config,
                 "config_dict": daily_configs[d]["config_dict"],
                 "intent_summary": daily_intents[d],
                 "menu_agent": menu_agent,
                 "excluded_dishes": list(excluded_dishes),
+                "candidate_dishes": candidate_dishes,
+                "standard_quota_str": standard_quota_str_cache,
                 "attempt": 0,
                 "locked_meals": locked_meals_by_date.get(d)
             }
@@ -510,7 +570,7 @@ async def orchestrate_menu_stream(
                 for prev_d, cat, d_name in kept_history:
                     prev_date_obj = date_cls.fromisoformat(prev_d)
                     diff_days = abs((target_date_obj - prev_date_obj).days)
-                    if cat in {"主食", "汤"}:
+                    if cat in {"汤"}:
                         continue
                     elif cat == "素菜":
                         if diff_days <= 1:
@@ -519,12 +579,24 @@ async def orchestrate_menu_stream(
                         if diff_days <= 3:
                             current_retry_excluded.add(d_name)
 
+                # 全局重排也走预筛选
+                retry_day_config = daily_configs[d]["config"]
+                retry_red_lines = retry_day_config.global_hard_constraints.red_lines or []
+                retry_candidates = pre_filter_candidate_dishes(
+                    all_dishes=all_dishes_cache,
+                    config=retry_day_config,
+                    red_lines=retry_red_lines,
+                    excluded_dishes=list(current_retry_excluded),
+                )
+
                 stream_gen = menu_agent.execute_stream(
-                    config=daily_configs[d]["config"],
+                    config=retry_day_config,
                     date=d,
                     intent_summary=daily_intents[d],
                     excluded_dishes=list(current_retry_excluded),
                     retry_alerts=retry_alerts_text,
+                    candidate_dishes=retry_candidates,
+                    standard_quota_str=standard_quota_str_cache,
                 )
                 
                 raw_content = ""

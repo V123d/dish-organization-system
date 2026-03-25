@@ -15,31 +15,41 @@ import type { HistoryRecord } from '../services/api';
 function createDefaultMealConfig(name: string, id: string): MealConfig {
     let budget = 100;
     let categories = [
-        { name: '大荤', count: 1 },
-        { name: '小荤', count: 1 },
-        { name: '素菜', count: 2 },
+        { name: '猪肉类', count: 1 },
+        { name: '鸡鸭禽类', count: 1 },
+        { name: '鱼虾海鲜类', count: 1 },
+        { name: '蔬菜类', count: 2 },
+        { name: '豆制品类', count: 1 },
+        { name: '蛋类', count: 1 },
+        { name: '菌菇类', count: 1 },
+        { name: '面点类', count: 1 },
         { name: '主食', count: 1 },
-        { name: '汤', count: 1 },
-        { name: '水果', count: 1 },
+        { name: '水果类', count: 1 },
+        { name: '牛奶饮品类', count: 1 },
+        { name: '凉菜', count: 1 },
+        { name: '汤羹类', count: 1 },
     ];
 
     if (name === '早餐') {
         budget = 50;
         categories = [
             { name: '主食', count: 1 },
-            { name: '素菜', count: 2 },
-            { name: '牛奶', count: 1 },
-            { name: '甜点', count: 1 },
+            { name: '面点类', count: 2 },
+            { name: '蛋类', count: 1 },
+            { name: '咸菜腌菜类', count: 2 },
+            { name: '牛奶饮品类', count: 1 },
         ];
-    } else if (name === '午餐') {
+    } else if (name === '午餐' || name === '晚餐') {
         budget = 100;
         categories = [
-            { name: '大荤', count: 1 },
-            { name: '小荤', count: 1 },
-            { name: '素菜', count: 1 },
-            { name: '凉菜', count: 1 },
-            { name: '汤', count: 1 },
-            { name: '水果', count: 1 },
+            { name: '猪肉类', count: 1 },
+            { name: '鸡鸭禽类', count: 1 },
+            { name: '鱼虾海鲜类', count: 1 },
+            { name: '蔬菜类', count: 2 },
+            { name: '豆制品类', count: 1 },
+            { name: '汤羹类', count: 1 },
+            { name: '水果类', count: 1 },
+            { name: '主食', count: 1 },
         ];
     }
 
@@ -139,7 +149,7 @@ export const useAppStore = create<AppState>((set) => ({
     config: {
         context_overview: {
             kitchen_class: '一类灶' as KitchenClass,
-            city: '广州市',
+            city: '云南武警支队',
             schedule,
         },
         global_hard_constraints: {
